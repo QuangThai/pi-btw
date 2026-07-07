@@ -38,7 +38,6 @@ pi install D:/Workspace/pi-btw
 |---------|-------------|
 | `/btw <question>` | Ask side question → widget shows above editor |
 | `/btw` | Open overlay panel with full history |
-| `Alt+B` | Toggle widget (show/hide latest Q&A) |
 
 ### Widget controls (latest Q&A)
 
@@ -71,10 +70,9 @@ Lưu tại `~/.pi/agent/btw-settings.json`:
   → Fork session context (plain text → LLM)
   → Gọi model: "You are separate agent. NO tools. Single turn."
   → Lưu Q&A vào extension state
-  → Show widget above editor (non-modal)
+  → Show answer view (scrollable, Esc dismiss)
 
-Alt+B → toggle widget (show/hide latest)
-/btw  → open overlay panel with all history
+/btw → open history browser
 ```
 
 ## 📁 Structure

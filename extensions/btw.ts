@@ -442,18 +442,7 @@ export default function (ext: ExtensionAPI) {
     },
   });
 
-  // ── Alt+B shortcut ────────────────────────────────────────────
-  ext.registerShortcut("alt+b", {
-    description: "Show latest /btw side question",
-    handler: async (ctx) => {
-      if (btwEntries.length === 0) {
-        ctx.ui.notify("No side questions yet. Try /btw <question>", "info");
-        return;
-      }
-      const latest = btwEntries[btwEntries.length - 1]!;
-      await showAnswer(ctx, latest);
-    },
-  });
+
 }
 
 // ────────────────────────────────────────────────────────────────
