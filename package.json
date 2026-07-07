@@ -1,0 +1,10 @@
+{
+  "name": "pi-btw",
+  "version": "1.0.0",
+  "description": "Side questions for Pi Coding Agent — ask /btw without interrupting the main session",
+  "keywords": ["pi-package", "btw", "side-questions"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./extensions/btw.ts"]
+  }
+}
