@@ -1,10 +1,62 @@
 {
   "name": "pi-btw",
   "version": "1.0.0",
-  "description": "Side questions for Pi Coding Agent — ask /btw without interrupting the main session",
-  "keywords": ["pi-package", "btw", "side-questions"],
+  "description": "Ask non-blocking side questions in Pi without interrupting your main coding session.",
   "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-coding-agent",
+    "pi-extension",
+    "btw",
+    "side-questions",
+    "agent",
+    "tui"
+  ],
+  "homepage": "https://github.com/QuangThai/pi-btw#readme",
+  "bugs": {
+    "url": "https://github.com/QuangThai/pi-btw/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/QuangThai/pi-btw.git"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck",
+    "pack:dry-run": "npm pack --dry-run",
+    "prepack": "npm run typecheck"
+  },
+  "files": [
+    "extensions/btw.ts",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "assets/pi-btw-gallery.png"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
   "pi": {
-    "extensions": ["./extensions/btw.ts"]
+    "extensions": [
+      "./extensions/btw.ts"
+    ],
+    "image": "https://raw.githubusercontent.com/QuangThai/pi-btw/main/assets/pi-btw-gallery.png"
   }
 }

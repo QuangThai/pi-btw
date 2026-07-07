@@ -7,17 +7,16 @@
  * Usage:
  *   /btw <question>    → full answer view (scrollable, Esc to dismiss)
  *   /btw               → history browser (↑↓ nav, Enter expand, d delete)
- *   Alt+B              → latest answer (same as /btw <question>)
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { complete, type UserMessage } from "@earendil-works/pi-ai/compat";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { convertToLlm, getAgentDir, getMarkdownTheme, serializeConversation } from "@earendil-works/pi-coding-agent";
 import type { Component, MarkdownTheme } from "@earendil-works/pi-tui";
-import { Key, Markdown, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Key, Markdown, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 
 // ────────────────────────────────────────────────────────────────
 // Types
@@ -51,10 +50,6 @@ function loadGlobalSettings(): BtwSettings {
   try { const d = JSON.parse(readFileSync(getGlobalSettingsPath(), "utf8")); return { maxTokens: typeof d.maxTokens === "number" ? d.maxTokens : DEFAULT_SETTINGS.maxTokens }; }
   catch { return { ...DEFAULT_SETTINGS }; }
 }
-function saveGlobalSettings(s: BtwSettings): void {
-  const f = getGlobalSettingsPath(); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, `${JSON.stringify(s, null, 2)}\n`, "utf8");
-}
-
 // ────────────────────────────────────────────────────────────────
 // Entry management
 // ────────────────────────────────────────────────────────────────
@@ -141,7 +136,7 @@ function collectMsgs(ctx: ExtensionContext): AgentMessage[] {
 }
 
 async function ask(ctx: ExtensionContext, question: string, signal: AbortSignal):
-  Promise<{ answer: string; usage?: BtwUsage; error?: string }> {
+  Promise<{ answer?: string; usage?: BtwUsage; error?: string }> {
   if (!ctx.model) return { error: "No model selected. Run /model first." };
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
   if (!auth.ok || !auth.apiKey)
