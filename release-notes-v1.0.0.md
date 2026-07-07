@@ -1,6 +1,6 @@
 ## pi-btw 1.0.0
 
-First production-ready release of `pi-btw`, a Pi Coding Agent extension for quick, non-blocking side questions.
+First production-ready release of `@nguyenquangthai/pi-btw`, a Pi Coding Agent extension for quick, non-blocking side questions.
 
 ### Highlights
 
@@ -27,7 +27,7 @@ First production-ready release of `pi-btw`, a Pi Coding Agent extension for quic
 ### Install
 
 ```bash
-pi install npm:pi-btw
+pi install npm:@nguyenquangthai/pi-btw
 /reload
 ```
 

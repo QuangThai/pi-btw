@@ -8,6 +8,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Published the npm package under the `@nguyenquangthai/pi-btw` scope.
 - Added production-ready npm and Pi package metadata for discovery on npm and <https://pi.dev/packages>.
 - Added a gallery preview image for Pi package listings.
 - Added TypeScript validation through `tsconfig.json` and npm scripts.

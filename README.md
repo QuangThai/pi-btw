@@ -32,7 +32,7 @@ Esc dismiss
 Install from npm:
 
 ```bash
-pi install npm:pi-btw
+pi install npm:@nguyenquangthai/pi-btw
 ```
 
 Or install directly from GitHub:
