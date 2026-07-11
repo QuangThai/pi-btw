@@ -1,5 +1,8 @@
 # pi-btw
 
+[![npm version](https://img.shields.io/npm/v/@nguyenquangthai/pi-btw?style=flat-square&color=blue)](https://www.npmjs.com/package/@nguyenquangthai/pi-btw)
+[![license](https://img.shields.io/npm/l/@nguyenquangthai/pi-btw?style=flat-square)](LICENSE)
+
 A Pi Coding Agent extension for quick, non-blocking side questions.
 
 Use `/btw` when you want to ask about the current session without interrupting the main agent, changing the main conversation history, or giving the side assistant tool access.
