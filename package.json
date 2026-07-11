@@ -1,6 +1,6 @@
 {
   "name": "@nguyenquangthai/pi-btw",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Ask non-blocking side questions in Pi without interrupting your main coding session.",
   "license": "MIT",
   "keywords": [

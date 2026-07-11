@@ -41,6 +41,10 @@ let btwSettings: BtwSettings = { ...DEFAULT_SETTINGS };
 let entryCounter = 0;
 let api: ExtensionAPI | null = null;
 
+// ── Session-replacement guards (per pi docs best practices) ──
+let currentAbortController: AbortController | null = null;
+let sessionGeneration = 0;
+
 // ────────────────────────────────────────────────────────────────
 // Settings persistence
 // ────────────────────────────────────────────────────────────────
@@ -58,11 +62,16 @@ function genId(): string { return `btw-${++entryCounter}-${Date.now()}`; }
 
 function addEntry(e: BtwEntry): void {
   btwEntries.push(e);
-  api?.appendEntry("btw-entry", {
-    id: e.id, question: e.question, answer: e.answer,
-    modelProvider: e.modelProvider, modelId: e.modelId, timestamp: e.timestamp,
-    usage: e.usage, error: e.error,
-  });
+  try {
+    api?.appendEntry("btw-entry", {
+      id: e.id, question: e.question, answer: e.answer,
+      modelProvider: e.modelProvider, modelId: e.modelId, timestamp: e.timestamp,
+      usage: e.usage, error: e.error,
+    });
+  } catch {
+    // api stale after session replacement — entry still in btwEntries (module-level),
+    // will be restored from session file on next session_start via restore().
+  }
 }
 
 function delEntry(id: string): void { btwEntries = btwEntries.filter(e => e.id !== id); }
@@ -425,6 +434,16 @@ class BtwHistoryView implements Component {
 export default function (ext: ExtensionAPI) {
   api = ext;
   btwSettings = loadGlobalSettings();
+
+  // ── Session lifecycle ────────────────────────────────────────
+  // Per pi docs: cancel in-flight work on session_shutdown so pending
+  // command handlers don't continue with a stale ctx after replacement.
+  ext.on("session_shutdown", () => {
+    currentAbortController?.abort();
+    currentAbortController = null;
+    sessionGeneration++;
+  });
+
   ext.on("session_start", async (_e, ctx) => { restore(ctx); });
 
   // ── /btw command ──────────────────────────────────────────────
@@ -436,8 +455,6 @@ export default function (ext: ExtensionAPI) {
       else { await showHistory(ctx); }
     },
   });
-
-
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -445,32 +462,62 @@ export default function (ext: ExtensionAPI) {
 // ────────────────────────────────────────────────────────────────
 
 async function showAnswer(ctx: ExtensionContext, entry: BtwEntry): Promise<void> {
-  await ctx.ui.custom<void>((tui, th, _kb, done) => {
-    return new BtwAnswerView(tui, th as unknown as Theme, entry, () => done(undefined));
-  });
+  try {
+    await ctx.ui.custom<void>((tui, th, _kb, done) => {
+      return new BtwAnswerView(tui, th as unknown as Theme, entry, () => done(undefined));
+    });
+  } catch {
+    // stale ctx after session replacement — exit silently
+  }
 }
 
 async function showHistory(ctx: ExtensionContext): Promise<void> {
   if (btwEntries.length === 0) {
-    ctx.ui.notify("No side questions yet. Try /btw <question>", "info");
+    try {
+      ctx.ui.notify("No side questions yet. Try /btw <question>", "info");
+    } catch { /* stale ctx */ }
     return;
   }
-  await ctx.ui.custom<void>((tui, th, _kb, done) => {
-    return new BtwHistoryView(
-      tui, th as unknown as Theme,
-      () => done(undefined),
-      (id) => { delEntry(id); },
-      0, null,
-    );
-  });
+  try {
+    await ctx.ui.custom<void>((tui, th, _kb, done) => {
+      return new BtwHistoryView(
+        tui, th as unknown as Theme,
+        () => done(undefined),
+        (id) => { delEntry(id); },
+        0, null,
+      );
+    });
+  } catch {
+    // stale ctx after session replacement — exit silently
+  }
 }
 
 async function doAsk(ctx: ExtensionContext, question: string): Promise<void> {
-  if (!ctx.model) { ctx.ui.notify("No model selected.", "error"); return; }
-  ctx.ui.setStatus("btw", "\u03c0 /btw asking...");
+  // Guard initial ctx access — may already be stale if called after session replacement
+  try {
+    if (!ctx.model) { ctx.ui.notify("No model selected.", "error"); return; }
+    ctx.ui.setStatus("btw", "\u03c0 /btw asking...");
+  } catch {
+    return; // stale ctx
+  }
+
   const ac = new AbortController();
+  currentAbortController = ac;
+  const genAtStart = sessionGeneration;
+
   const r = await ask(ctx, question, ac.signal);
-  ctx.ui.setStatus("btw", undefined);
+
+  currentAbortController = null;
+
+  // Per pi docs: if session was replaced while we were awaiting,
+  // this ctx is stale — exit immediately.
+  if (sessionGeneration !== genAtStart) return;
+
+  try {
+    ctx.ui.setStatus("btw", undefined);
+  } catch {
+    return; // stale ctx
+  }
 
   addEntry({
     id: genId(), question, answer: r.answer ?? "",
