@@ -3,54 +3,44 @@
 [![npm version](https://img.shields.io/npm/v/@nguyenquangthai/pi-btw?style=flat-square&color=blue)](https://www.npmjs.com/package/@nguyenquangthai/pi-btw)
 [![license](https://img.shields.io/npm/l/@nguyenquangthai/pi-btw?style=flat-square)](LICENSE)
 
-A Pi Coding Agent extension for quick, non-blocking side questions.
+A Pi Coding Agent extension for **fast, non-blocking, parallel side questions**.
 
-Use `/btw` when you want to ask about the current session without interrupting the main agent, changing the main conversation history, or giving the side assistant tool access.
+Ask quick side questions without interrupting the main agent, without bloating its context, and without waiting — all via keyboard shortcuts.
 
 ```text
-/btw What does resolveUser do?
-
-async function resolveUser(id: string): Promise<User> {
-  const user = await db.users.findById(id);
-  if (!user) throw new NotFoundError("User not found");
-  return user;
-}
-
-selected-model · 230 out · $0.008
-Esc dismiss
+/btw What does resolveUser do?       → instant answer view
+/btw 2 Explain this error            → slot 2, independent
+Alt+I                                → inject slot answer into main chat
 ```
 
 ## Features
 
-- **Non-blocking side questions** — ask while the main Pi agent keeps working.
-- **Read-only assistant** — the side assistant has no tools and cannot modify files.
-- **Clean conversation history** — `/btw` answers are stored as extension state, not as normal chat turns.
-- **Session persistence** — side-question history survives `/resume` and `/fork`.
-- **Keyboard-first UI** — scrollable answer view and full-history browser inside the Pi TUI.
-- **Markdown rendering** — formatted responses with syntax-highlighted code blocks.
-- **Model-aware execution** — uses the currently selected Pi model and reports token/cost metadata when available.
+- **⚡ Zero context overhead** — BTW runs in a separate RPC child process (`pi --mode rpc --no-session`). No context bloat.
+- **🧵 Parallel slots** — 9 independent slots (1-9). Ask different questions simultaneously, each in its own session.
+- **🎯 Context scoping** — Smart strategies to include only the relevant context (`smart`, `last-n`, `budget`, `compact`, or `none`).
+- **📡 Streaming** — Answers appear token-by-token (Time To First Token < 500ms).
+- **🔇 Context isolation** — BTW entries are filtered out of the main agent's context automatically.
+- **💉 Answer injection** — `Alt+I` injects answers into main chat when you want them.
+- **📜 Session persistence** — Slot state survives `/resume`, `/fork`, and restarts.
+- **⌨️ Keyboard-first UI** — Scrollable answer view + full history browser.
+- **💰 Cost tracking** — Per-answer token/cost display.
+- **🔧 Flexible model config** — Defaults to `ctx.model` (same as main agent). Optionally configure a cheaper model per-slot.
 
 ## Install
 
-Install from npm:
-
 ```bash
 pi install npm:@nguyenquangthai/pi-btw
-```
-
-Or install directly from GitHub:
-
-```bash
-pi install git:github.com/QuangThai/pi-btw
-```
-
-Reload the current Pi session:
-
-```bash
 /reload
 ```
 
-For local development:
+Or from GitHub:
+
+```bash
+pi install git:github.com/QuangThai/pi-btw
+/reload
+```
+
+Local development:
 
 ```bash
 git clone https://github.com/QuangThai/pi-btw.git
@@ -66,115 +56,138 @@ pi install ./
 
 | Command | Description |
 |---------|-------------|
-| `/btw <question>` | Ask a side question using the current session context. |
+| `/btw <question>` | Ask in the active slot (auto-creates slot 1). |
+| `/btw N <question>` | Ask in slot N (1-9). |
+| `/btw N` | Switch to slot N. |
 | `/btw` | Open the side-question history browser. |
 
-### Latest answer view
+### Shortcuts
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓` | Scroll the answer when it is longer than the visible area. |
-| `Esc` | Dismiss the answer view. |
+| `Alt+I` | Inject answers from active slot into main chat, then clear. |
+| `Alt+X` | Clear active slot (discard answers). |
+| `Alt+H` | Previous slot. |
+| `Alt+L` | Next slot. |
+| `Alt+1…Alt+9` | Jump directly to slot N. |
+
+### Answer view
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Scroll answer. |
+| `Esc` | Dismiss view. |
 
 ### History browser
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓` | Navigate entries, or scroll an expanded answer. |
-| `j` / `k` | Vim-style navigation. |
-| `Enter` | Expand or collapse the selected answer. |
-| `d` | Delete the selected entry from the in-memory history. |
-| `Esc` / `q` | Close the history browser. |
+| `↑` / `↓` or `j` / `k` | Navigate entries or scroll expanded answer. |
+| `Enter` | Expand/collapse selected answer. |
+| `d` | Delete entry. |
+| `Esc` / `q` | Close. |
 
 ## Settings
 
-Global settings are stored at:
+Global settings at `~/.pi/agent/btw-settings.json`:
 
-```text
-~/.pi/agent/btw-settings.json
+```json
+{
+  "maxTokens": 1000,
+  "maxContextTokens": 8000,
+  "strategy": "smart",
+  "recentExchanges": 8
+}
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `maxTokens` | `1000` | Maximum output tokens for each `/btw` response. |
+| `maxTokens` | `1000` | Max output tokens per answer. |
+| `maxContextTokens` | `8000` | Max context tokens to include (strategy-dependent). |
+| `strategy` | `"smart"` | Context scoping: `"smart"`, `"last-n"`, `"budget"`, `"compact"`, `"none"`, `"full"`. |
+| `recentExchanges` | `8` | Recent exchanges to keep when strategy is `"last-n"`. |
+| `btwProvider` | _(optional)_ | Separate provider for BTW (cheaper model). Uses `ctx.model` if unset. |
+| `btwModelId` | _(optional)_ | Separate model ID for BTW. |
+| `slotModels` | _(optional)_ | Per-slot model overrides. Array of `{ provider, modelId }` per slot. |
 
-Example:
+### Context strategies
+
+| Strategy | Description | Typical tokens |
+|---|---|---|
+| `"none"` | No context — fastest, cheapest. | 0 |
+| `"compact"` | Use compaction summary + latest exchanges. | ~500-2k |
+| `"smart"` | Skip tool results, stay within budget. | ~2-8k |
+| `"last-n"` | Keep N recent exchanges. | ~4-10k |
+| `"budget"` | Walk backwards up to token budget. | Configurable |
+| `"full"` | All context (legacy behavior). | 100k+ |
+
+### Per-slot model example
 
 ```json
 {
-  "maxTokens": 1500
+  "slotModels": [
+    { "provider": "openai", "modelId": "gpt-4o-mini" },
+    null,
+    { "provider": "anthropic", "modelId": "claude-sonnet-4-20250514" }
+  ]
 }
 ```
 
-## How it works
+Slot 1 → gpt-4o-mini (cheap), Slot 3 → claude-sonnet (powerful), Slot 2 → default (ctx.model).
 
-```text
-/btw "question"
-  → Collect the current Pi branch as plain text context
-  → Ask the currently selected model in a single read-only turn
-  → Store the Q&A as extension state
-  → Show the answer in a scrollable Pi TUI view
+> **Note:** Without `btwProvider`/`btwModelId`/`slotModels`, BTW uses the same model as the main agent — no extra API key needed.
 
-/btw
-  → Open the history browser for previous side questions
+## Architecture
+
+```
+extensions/btw.ts         Extension entry: commands, shortcuts, UI, context filter
+src/
+├── btw-child.ts          RPC child process (pi --mode rpc --no-session)
+├── session-state.ts      Slot manager (9 slots, queue, turns, restore)
+└── types.ts              Shared TypeScript types
 ```
 
-The side assistant receives explicit instructions that it has **no tools**, must answer in a **single turn**, and must not simulate tool calls or actions.
+### Flow
 
-## Package structure
-
-```text
-pi-btw/
-├── package.json              Pi + npm package metadata
-├── README.md                 User documentation
-├── CHANGELOG.md              Release history
-├── LICENSE                   MIT license
-├── assets/
-│   └── pi-btw-gallery.png    pi.dev package gallery preview
-├── extensions/
-│   └── btw.ts                /btw extension entry point
-└── tsconfig.json             TypeScript validation config
+```
+User: /btw 2 "explain this error"
+  │
+  ├─ resolveBtwModel(slotIndex=1) → check slotModels[1] → ctx.model fallback
+  ├─ ensureSlot(state, 1) → create/switch to slot 2
+  ├─ BtwChild.spawn("pi --mode rpc --no-session --model X")
+  │   └─ JSONL RPC: { type: "prompt", message, streamingBehavior: "followUp" }
+  │   └─ Events: message_update (streaming) → agent_settled (done)
+  ├─ onPartial(text) → state.text = text → tui.requestRender()
+  ├─ User sees streaming answer
+  └─ Alt+I → pi.sendUserMessage(injectionText()) → inject into main chat
 ```
 
 ## Development
 
 ```bash
 npm install
-npm run typecheck
-npm pack --dry-run
+npm run typecheck    # tsc --noEmit (zero errors expected)
 ```
 
-`npm pack --dry-run` shows the exact files that will be included in the published npm tarball.
+## Package structure
 
-## Publishing
-
-Before publishing a release:
-
-1. Confirm `package.json` has the target version.
-2. Run validation:
-
-   ```bash
-   npm run typecheck
-   npm pack --dry-run
-   ```
-
-3. Publish to npm:
-
-   ```bash
-   npm publish
-   ```
-
-4. Pi discovers packages for <https://pi.dev/packages> through the `pi-package` keyword and the `pi` manifest in `package.json`.
-
-For this package, the Pi manifest exposes:
-
-```json
-{
-  "pi": {
-    "extensions": ["./extensions/btw.ts"],
-    "image": "https://raw.githubusercontent.com/QuangThai/pi-btw/main/assets/pi-btw-gallery.png"
-  }
-}
+```
+pi-btw/
+├── package.json              Pi + npm package metadata
+├── README.md                 This file
+├── CHANGELOG.md
+├── BENCHMARK.md              Performance benchmark guide
+├── BTW-IMPROVEMENT-PLAN.md   Full architecture improvement plan
+├── LICENSE                   MIT
+├── assets/
+│   └── pi-btw-gallery.png
+├── extensions/
+│   └── btw.ts                Extension entry point
+├── src/
+│   ├── btw-child.ts          RPC child process
+│   ├── session-state.ts      Slot state management
+│   └── types.ts              Shared types
+└── tsconfig.json
 ```
 
 ## License

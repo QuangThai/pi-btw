@@ -1,0 +1,4 @@
+# Keep source and documentation portable across Windows/macOS/Linux.
+*.ts text eol=lf
+*.md text eol=lf
+*.json text eol=lf

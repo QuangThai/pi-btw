@@ -1,7 +1,7 @@
 {
   "name": "@nguyenquangthai/pi-btw",
-  "version": "1.0.1",
-  "description": "Ask non-blocking side questions in Pi without interrupting your main coding session.",
+  "version": "1.1.0",
+  "description": "Fast, non-blocking, parallel side questions for Pi Coding Agent — RPC child process, 9 slots, streaming, answer injection.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -10,7 +10,9 @@
     "btw",
     "side-questions",
     "agent",
-    "tui"
+    "tui",
+    "rpc",
+    "slot"
   ],
   "homepage": "https://github.com/QuangThai/pi-btw#readme",
   "bugs": {
@@ -31,8 +33,13 @@
   },
   "files": [
     "extensions/btw.ts",
+    "src/btw-child.ts",
+    "src/session-state.ts",
+    "src/types.ts",
     "README.md",
     "CHANGELOG.md",
+    "BENCHMARK.md",
+    "BTW-IMPROVEMENT-PLAN.md",
     "LICENSE",
     "assets/pi-btw-gallery.png"
   ],
