@@ -1,6 +1,6 @@
 {
   "name": "@nguyenquangthai/pi-btw",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Fast, non-blocking, parallel side questions for Pi Coding Agent — RPC child process, 9 slots, streaming, answer injection.",
   "license": "MIT",
   "keywords": [

@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-07-16
+
+### Fixed
+
+- Released the final validated source artifact so the npm package, Git tag, and GitHub release are reproducible from the same commit.
+- Restored strict unused-symbol TypeScript checks and removed unused extension helpers.
+- Added `.gitattributes` to enforce LF line endings for TypeScript, Markdown, and JSON files across platforms.
+
+### Verified
+
+- `npm run typecheck` — passes with `noUnusedLocals` and `noUnusedParameters` enabled.
+- `npm pack --dry-run` — correct runtime file listing.
+
 ## [1.1.0] - 2026-07-16
 
 ### Added
@@ -88,3 +101,4 @@ This project follows [Semantic Versioning](https://semver.org/).
 [1.0.0]: https://github.com/QuangThai/pi-btw/releases/tag/v1.0.0
 [1.0.1]: https://github.com/QuangThai/pi-btw/releases/tag/v1.0.1
 [1.1.0]: https://github.com/QuangThai/pi-btw/releases/tag/v1.1.0
+[1.1.1]: https://github.com/QuangThai/pi-btw/releases/tag/v1.1.1
