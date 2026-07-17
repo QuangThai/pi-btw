@@ -35,7 +35,6 @@ import {
   clearSlot,
   switchRelativeSlot,
   injectionText,
-  slotStatus,
   restoreStateFromMessages,
 } from "../src/session-state.ts";
 import type {
@@ -411,11 +410,11 @@ async function fallbackAskStreaming(
 // ────────────────────────────────────────────────────────────────
 
 function L(T: Theme, content: string, cw: number): string {
-  return `${T.fg("border", "║")} ${truncateToWidth(content || "", cw, "", true)} ${T.fg("border", "║")}`;
+  return `${T.fg("accent", "║")} ${truncateToWidth(content || "", cw, "", true)} ${T.fg("accent", "║")}`;
 }
 
 function S(T: Theme, cw: number): string {
-  return `${T.fg("border", "║")} ${T.fg("border", "─".repeat(cw))} ${T.fg("border", "║")}`;
+  return `${T.fg("accent", "║")} ${T.fg("accent", "─".repeat(cw))} ${T.fg("accent", "║")}`;
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -479,8 +478,8 @@ class BtwAnswerView implements Component {
 
     const lbl = e.done ? ` /btw [${e.slot}] ` : ` /btw [${e.slot}] \u25b6 streaming... `;
     const topD = Math.max(0, width - 3 - [...lbl].length);
-    lines.push(T.fg("border", `╔═${lbl}${"═".repeat(topD)}╗`));
-    lines.push(L(T, ` ${T.fg("accent", "\u2753")} ${T.fg("text", e.question)}`, cw));
+    lines.push(T.fg("accent", `╔═${lbl}${"═".repeat(topD)}╗`));
+    lines.push(L(T, ` ${T.fg("accent", "\u2753")} ${T.fg("accent", e.question)}`, cw));
 
     if (e.error) {
       lines.push(S(T, cw));
@@ -505,7 +504,7 @@ class BtwAnswerView implements Component {
     }
 
     lines.push(S(T, cw));
-    const meta: string[] = [`slot ${e.slot}`];
+    const meta: string[] = [];
     if (e.modelId) meta.push(T.fg("dim", e.modelId));
     if (e.usage?.output) meta.push(T.fg("dim", `${fmtTokens(e.usage.output)} out`));
     if (e.usage?.input) meta.push(T.fg("dim", `${fmtTokens(e.usage.input)} in`));
@@ -519,9 +518,9 @@ class BtwAnswerView implements Component {
       : ` ${T.fg("dim", "Esc close")} `;
     const dd = Math.max(0, width - 2 - [...hp].length);
     lines.push(
-      T.fg("border", `╚${"═".repeat(dd)}`) +
+      T.fg("accent", `╚${"═".repeat(dd)}`) +
       hintsDim +
-      T.fg("border", "╝")
+      T.fg("accent", "╝")
     );
     lines.push("");
     return lines;
@@ -620,7 +619,7 @@ class BtwHistoryView implements Component {
     const items = btwEntries;
     const hdr = ` /btw  Side Questions${items.length > 0 ? ` (${items.length})` : ""} `;
     const hdrL = [...hdr].length;
-    lines.push(T.fg("border", `╔═${hdr}${"═".repeat(Math.max(0, width - 3 - hdrL))}╗`));
+    lines.push(T.fg("accent", `╔═${hdr}${"═".repeat(Math.max(0, width - 3 - hdrL))}╗`));
 
     if (items.length === 0) {
       lines.push(L(T, ` ${T.fg("dim", "No side questions yet.")}`, cw));
@@ -661,39 +660,12 @@ class BtwHistoryView implements Component {
     const hp = ` \u2191\u2193 nav \u00b7 Enter${isExp ? " collapse" : " expand"} \u00b7 d del \u00b7 Esc/q close `;
     const hintsDim = ` ${T.fg("dim", `\u2191\u2193 nav \u00b7 Enter${isExp ? " collapse" : " expand"} \u00b7 d del \u00b7 Esc/q close`)} `;
     const dd = Math.max(0, width - 2 - [...hp].length);
-    lines.push(T.fg("border", `╚${"═".repeat(dd)}`) + hintsDim + T.fg("border", "╝"));
+    lines.push(T.fg("accent", `╚${"═".repeat(dd)}`) + hintsDim + T.fg("accent", "╝"));
     lines.push("");
     return lines;
   }
 
   dispose(): void {}
-}
-
-// ────────────────────────────────────────────────────────────────
-// Widget: Slot status bar
-// ────────────────────────────────────────────────────────────────
-
-function renderSlotWidget(ctx: ExtensionContext, state: BtwSlotState): void {
-  const slots = listSlots(state);
-  if (slots.length === 0) {
-    try { ctx.ui.setWidget("btw-slots", undefined); } catch { /* stale ctx */ }
-    return;
-  }
-
-  const statusLines: string[] = [];
-  for (const slot of slots) {
-    const s = slotStatus(slot);
-    const active = slot.index === state.activeIndex ? "\u25b8" : " ";
-    const icon = s === "running" ? "\u25b6" : s === "unread" ? "\u25cf" : s === "failed" ? "\u2717" : s === "answered" ? "\u2713" : "\u25cb";
-    const count = slot.turns.length;
-    const lastQ = slot.turns[slot.turns.length - 1]?.question ?? "";
-    const truncated = lastQ.length > 40 ? lastQ.slice(0, 40) + "..." : lastQ;
-    statusLines.push(`${active} [${slot.index + 1}] ${icon} ${truncated || "(empty)"}${count > 1 ? ` (${count})` : ""}`);
-  }
-  statusLines.unshift("--- /btw slots ---");
-
-  // Widget not available in this pi version — use status instead
-  try { ctx.ui.setStatus("btw-slots", statusLines.join(" | ")); } catch { /* stale ctx */ }
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -750,6 +722,8 @@ export default function (ext: ExtensionAPI) {
   ext.on("session_start", async (_e, ctx) => {
     slotState = createInitialState();
     restore(ctx);
+    // Clear the legacy slot-status line from prior extension versions.
+    try { ctx.ui.setStatus("btw-slots", undefined); } catch (e) { logBtw("warn", "Clear legacy slot status failed", String(e)); }
   });
 
   // ── /btw command ──
@@ -771,7 +745,6 @@ export default function (ext: ExtensionAPI) {
         const slot = ensureSlot(slotState, slotNumber - 1);
         slot.unread = false;
         slotState.folded = false;
-        renderSlotWidget(ctx, slotState);
         ctx.ui.notify(`Switched to slot ${slotNumber}`, "info");
         return;
       }
@@ -796,8 +769,7 @@ export default function (ext: ExtensionAPI) {
       const turns = slot.turns.filter((t) => t.answer || t.error);
       if (turns.length === 0) { ctx.ui.notify("No answers in active slot.", "warning"); return; }
       ext.sendUserMessage(injectionText(turns));
-      await clearSlot(slotState, slot, () => renderSlotWidget(ctx, slotState));
-      renderSlotWidget(ctx, slotState);
+      await clearSlot(slotState, slot);
       ctx.ui.notify("Injected and cleared slot.", "info");
     },
   });
@@ -807,25 +779,22 @@ export default function (ext: ExtensionAPI) {
     handler: async (ctx) => {
       const slot = activeSlot(slotState);
       if (!slot) { ctx.ui.notify("No active /btw slot.", "warning"); return; }
-      await clearSlot(slotState, slot, () => renderSlotWidget(ctx, slotState));
-      renderSlotWidget(ctx, slotState);
+      await clearSlot(slotState, slot);
       ctx.ui.notify("Slot cleared.", "info");
     },
   });
 
   ext.registerShortcut("alt+h", {
     description: "Previous /btw slot",
-    handler: async (ctx) => {
+    handler: async () => {
       switchRelativeSlot(slotState, -1);
-      renderSlotWidget(ctx, slotState);
     },
   });
 
   ext.registerShortcut("alt+l", {
     description: "Next /btw slot",
-    handler: async (ctx) => {
+    handler: async () => {
       switchRelativeSlot(slotState, 1);
-      renderSlotWidget(ctx, slotState);
     },
   });
 
@@ -834,9 +803,8 @@ export default function (ext: ExtensionAPI) {
     const slotIndex = n - 1;
     ext.registerShortcut(`alt+${n}` as any, {
       description: `Jump to /btw slot ${n}`,
-      handler: async (ctx) => {
+      handler: async () => {
         ensureSlot(slotState, slotIndex);
-        renderSlotWidget(ctx, slotState);
       },
     });
   }
@@ -919,9 +887,7 @@ async function doAskRpc(ctx: ExtensionContext, question: string): Promise<void> 
       // Try RPC child first
       if (!slot.child) {
         const { BtwChild } = await import("../src/btw-child");
-        slot.child = new BtwChild(ctx.cwd, model.provider, model.id, () => {
-          renderSlotWidget(ctx, slotState);
-        });
+        slot.child = new BtwChild(ctx.cwd, model.provider, model.id);
         await slot.child.ready();
       }
 
@@ -986,8 +952,6 @@ async function doAskRpc(ctx: ExtensionContext, question: string): Promise<void> 
     modelProvider: model.provider, modelId: model.id,
     timestamp: Date.now(), usage: r.usage, error: r.error,
   });
-
-  renderSlotWidget(ctx, slotState);
 
   // If user dismissed early, show a completion notification
   if (userDismissed && (state.text || state.error)) {

@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.2] - 2026-07-16
+
+### Changed
+
+- Updated BTW answer and history frames to use the active theme's `accent` color, making the border and question prompt visually prominent without changing Markdown answer colors.
+- Removed the legacy `/btw slots` statusline and the redundant slot number in answer metadata; model, token counts, and cost remain visible.
+
+### Fixed
+
+- Clear a statusline left behind by prior BTW versions at session start.
+
+### Verified
+
+- `npm run typecheck`
+- `npm ci`
+- `npm pack --dry-run`
+
 ## [1.1.1] - 2026-07-16
 
 ### Fixed
@@ -102,3 +119,4 @@ This project follows [Semantic Versioning](https://semver.org/).
 [1.0.1]: https://github.com/QuangThai/pi-btw/releases/tag/v1.0.1
 [1.1.0]: https://github.com/QuangThai/pi-btw/releases/tag/v1.1.0
 [1.1.1]: https://github.com/QuangThai/pi-btw/releases/tag/v1.1.1
+[1.1.2]: https://github.com/QuangThai/pi-btw/releases/tag/v1.1.2
