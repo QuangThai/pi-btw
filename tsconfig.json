@@ -15,7 +15,9 @@
   },
   "include": [
     "extensions/**/*.ts",
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "test/**/*.mts",
+    "scripts/**/*.mts"
   ],
   "exclude": [
     "node_modules"

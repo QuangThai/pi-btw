@@ -15,7 +15,8 @@ Alt+I                                → inject slot answer into main chat
 
 ## Features
 
-- **⚡ Zero context overhead** — BTW runs in a separate RPC child process (`pi --mode rpc --no-session`). No context bloat.
+- **⚡ Zero context overhead** — BTW runs in a separate RPC child process through Pi's resolved CLI entry (`node <pi-cli> --mode rpc --no-session`). No context bloat.
+- **🔒 Safe tool access** — Child sessions explicitly enable read-only tools (`read`, `grep`, `find`, `ls`) and do not recursively load extensions or MCP servers.
 - **🧵 Parallel slots** — 9 independent slots (1-9). Ask different questions simultaneously, each in its own session.
 - **🎯 Context scoping** — Smart strategies to include only the relevant context (`smart`, `last-n`, `budget`, `compact`, or `none`).
 - **📡 Streaming** — Answers appear token-by-token (Time To First Token < 500ms).
@@ -142,7 +143,7 @@ Slot 1 → gpt-4o-mini (cheap), Slot 3 → claude-sonnet (powerful), Slot 2 → 
 ```
 extensions/btw.ts         Extension entry: commands, shortcuts, UI, context filter
 src/
-├── btw-child.ts          RPC child process (pi --mode rpc --no-session)
+├── btw-child.ts          RPC child process (resolved Pi CLI + read-only tools)
 ├── session-state.ts      Slot manager (9 slots, queue, turns, restore)
 └── types.ts              Shared TypeScript types
 ```
@@ -154,9 +155,9 @@ User: /btw 2 "explain this error"
   │
   ├─ resolveBtwModel(slotIndex=1) → check slotModels[1] → ctx.model fallback
   ├─ ensureSlot(state, 1) → create/switch to slot 2
-  ├─ BtwChild.spawn("pi --mode rpc --no-session --model X")
+  ├─ BtwChild.spawn(process.execPath, "<resolved pi-cli> --mode rpc --no-session --tools read,grep,find,ls")
   │   └─ JSONL RPC: { type: "prompt", message, streamingBehavior: "followUp" }
-  │   └─ Events: message_update (streaming) → agent_settled (done)
+  │   └─ Events: message_update (streaming) → agent_end/agent_settled (done)
   ├─ onPartial(text) → state.text = text → tui.requestRender()
   ├─ User sees streaming answer
   └─ Alt+I → pi.sendUserMessage(injectionText()) → inject into main chat
@@ -167,6 +168,9 @@ User: /btw 2 "explain this error"
 ```bash
 npm install
 npm run typecheck    # tsc --noEmit (zero errors expected)
+npm test             # launcher + RPC handshake tests
+BTW_SMOKE_MODEL=provider/model npm run smoke:rpc  # one real read-tool smoke test
+# PowerShell: $env:BTW_SMOKE_MODEL="provider/model"; npm run smoke:rpc
 ```
 
 ## Package structure

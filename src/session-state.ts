@@ -247,6 +247,7 @@ export function queueQuestionToSlot(args: {
       turn.turnIndex ??= slot.nextTurnIndex++;
       onRender?.(ctx, state);
 
+      const childBeforeTurn = slot.child;
       try {
         if (!slot.child) {
           slot.child = new BtwChild(ctx.cwd, provider, modelId, () => onRender?.(ctx, state));
@@ -264,6 +265,11 @@ export function queueQuestionToSlot(args: {
         delete turn.partial;
         turn.status = "answered";
       } catch (error) {
+        if (slot.child && slot.child === (childBeforeTurn ?? slot.child)) {
+          const failedChild = slot.child;
+          slot.child = undefined;
+          try { await failedChild.stop(); } catch { /* already closed */ }
+        }
         if (slot.generation !== generation) return;
         turn.error = error instanceof Error ? error.message : String(error);
         turn.status = "failed";

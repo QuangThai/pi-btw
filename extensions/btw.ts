@@ -38,6 +38,7 @@ import {
   restoreStateFromMessages,
 } from "../src/session-state.ts";
 import type {
+  BtwChildHandle,
   BtwSlotState,
   BtwUsage,
   BtwEntry,
@@ -64,6 +65,16 @@ function logBtw(level: "info" | "warn" | "error", msg: string, detail?: string):
   } catch {
     // Last resort — can't log, silently ignore
   }
+}
+
+function describeRpcFailure(error: unknown, child?: BtwChildHandle): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const stderr = child?.details.stderr.trim();
+  return stderr ? `${message} Stderr: ${stderr}` : message;
+}
+
+function truncateForNotice(text: string, max = 240): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 // Re-export for external access
@@ -240,7 +251,7 @@ const PROMPT = [
   "- You share the conversation context but are a completely separate instance.",
   "",
   "CRITICAL:",
-  "- You have NO tools. Do not call, request, simulate, or output tool calls.",
+  "- You have NO tools in this inline fallback mode. Do not call, request, simulate, or output tool calls.",
   "- This is a ONE-OFF response — there will be no follow-up turns.",
   '- NEVER say "Let me try..." or simulate action.',
   "- Answer directly using the provided context.",
@@ -673,6 +684,13 @@ class BtwHistoryView implements Component {
 // ────────────────────────────────────────────────────────────────
 
 export default function (ext: ExtensionAPI) {
+  // A BTW child is intentionally read-only and must not load this extension
+  // again, otherwise every child could recursively spawn another child.
+  if (process.env.PI_BTW_CHILD === "1") {
+    logBtw("info", "Skipping BTW extension in child process");
+    return;
+  }
+
   api = ext;
   btwSettings = loadGlobalSettings();
   slotState = createInitialState();
@@ -858,7 +876,7 @@ async function showHistory(ctx: ExtensionContext): Promise<void> {
 // ────────────────────────────────────────────────────────────────
 // RPC-based doAsk
 // Uses BtwChild (RPC child process) for zero-context-overhead answers.
-// Falls back to inline streaming if RPC is unavailable.
+// Falls back to an explicitly-notified inline no-tools mode if RPC is unavailable.
 // ────────────────────────────────────────────────────────────────
 
 async function doAskRpc(ctx: ExtensionContext, question: string): Promise<void> {
@@ -909,8 +927,36 @@ async function doAskRpc(ctx: ExtensionContext, question: string): Promise<void> 
       }
       return { answer: "(no answer)" };
     } catch (err) {
-      // Fall back to inline streaming if RPC fails
-      return fallbackAskStreaming(ctx, question, new AbortController().signal, onPartial);
+      const failedChild = slot.child;
+      const failure = describeRpcFailure(err, failedChild);
+      logBtw("error", "RPC child failed; using inline no-tools fallback", failure);
+
+      // Do not keep a dead child in the slot. The next question should get a
+      // fresh RPC process instead of failing immediately again.
+      if (failedChild && slot.child === failedChild) {
+        slot.child = undefined;
+        try {
+          await failedChild.stop();
+        } catch (stopError) {
+          logBtw("warn", "Failed to stop broken RPC child", String(stopError));
+        }
+      }
+
+      try {
+        ctx.ui.notify(
+          `BTW RPC unavailable; using inline no-tools fallback. ${truncateForNotice(failure)}`,
+          "warning",
+        );
+      } catch (notifyError) {
+        logBtw("warn", "Could not notify about RPC fallback", String(notifyError));
+      }
+      const fallbackController = new AbortController();
+      currentAbortController = fallbackController;
+      try {
+        return await fallbackAskStreaming(ctx, question, fallbackController.signal, onPartial);
+      } finally {
+        if (currentAbortController === fallbackController) currentAbortController = null;
+      }
     }
   })();
 

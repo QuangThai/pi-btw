@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.1.3] - 2026-08-10
+
+### Fixed
+
+- Launch RPC children through the resolved Pi CLI with the current Node runtime, fixing Windows `.cmd` resolution failures.
+- Support both modern `agent_settled` and older `agent_end` RPC completion events so tool calls do not hang.
+- Make RPC failures visible and recoverable instead of silently reusing dead children.
+
+### Changed
+
+- Enable read-only child tools (`read`, `grep`, `find`, `ls`) while disabling recursive extension/MCP loading.
+- Require Pi packages at version `0.80.3` or newer.
+
+### Verified
+
+- `npm run typecheck`
+- `npm test`
+- RPC read-tool smoke test with the configured model
+- `npm pack --dry-run`
+
 ## [1.1.2] - 2026-07-16
 
 ### Changed
@@ -38,7 +58,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **RPC child architecture** (`src/btw-child.ts`): Spawns `pi --mode rpc --no-session` as a headless child process for zero-context-overhead side questions. Communicates via JSONL over stdin/stdout.
+- **RPC child architecture** (`src/btw-child.ts`): Spawns Pi's resolved CLI entry through the current runtime with `--mode rpc --no-session` as a headless child process for zero-context-overhead side questions. Communicates via JSONL over stdin/stdout.
 - **9 parallel slots** (`src/session-state.ts`): Independent slots (1–9), each with its own RPC child process and turn queue. Ask multiple questions simultaneously.
 - **Smart context scoping**: 6 configurable strategies (`smart`, `compact`, `last-n`, `budget`, `none`, `full`) with token budget control.
 - **Context isolation filter**: BTW entries are automatically filtered out of the main agent's context via `ext.on("context", ...)`.
