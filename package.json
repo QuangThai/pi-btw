@@ -1,8 +1,8 @@
 {
   "name": "@nguyenquangthai/pi-btw",
-  "version": "1.1.3",
+  "version": "1.2.0",
   "type": "module",
-  "description": "Fast, non-blocking, parallel side questions for Pi Coding Agent — RPC child process, 9 slots, streaming, answer injection.",
+  "description": "Fast, non-blocking, parallel side questions for Pi Coding Agent \u2014 RPC child process, 9 slots, streaming, answer injection.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -28,23 +28,20 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test test/btw-child.test.mts",
-    "smoke:rpc": "node --experimental-strip-types scripts/rpc-tool-smoke.mts",
+    "test": "node --experimental-transform-types --test test/*.test.mts",
+    "smoke:rpc": "node --experimental-transform-types scripts/rpc-tool-smoke.mts",
     "build": "npm run typecheck",
     "pack:dry-run": "npm pack --dry-run",
-    "prepack": "npm run typecheck"
+    "prepack": "npm run typecheck",
+    "e2e": "node --experimental-transform-types scripts/e2e-btw.mts"
   },
   "files": [
     "extensions/btw.ts",
     "src/btw-child.ts",
     "src/session-state.ts",
     "src/types.ts",
-    "scripts/rpc-tool-smoke.mts",
-    "test/btw-child.test.mts",
     "README.md",
     "CHANGELOG.md",
-    "BENCHMARK.md",
-    "BTW-IMPROVEMENT-PLAN.md",
     "LICENSE",
     "assets/pi-btw-gallery.png"
   ],
@@ -52,10 +49,10 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.80.3",
-    "@earendil-works/pi-agent-core": ">=0.80.3",
-    "@earendil-works/pi-coding-agent": ">=0.80.3",
-    "@earendil-works/pi-tui": ">=0.80.3"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "*",
@@ -70,5 +67,19 @@
       "./extensions/btw.ts"
     ],
     "image": "https://raw.githubusercontent.com/QuangThai/pi-btw/main/assets/pi-btw-gallery.png"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
   }
 }

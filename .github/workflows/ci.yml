@@ -7,18 +7,31 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only by default; nothing in this workflow writes back to the repo.
+permissions:
+  contents: read
+
+# A newer push to the same ref makes older runs irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  typecheck:
-    runs-on: ubuntu-latest
+  verify:
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        node-version: ["22"]
+        # Windows is a first-class target: the RPC child resolves Pi's CLI
+        # entry point specifically to avoid the .cmd shim there.
+        os: [ubuntu-latest, windows-latest]
+        node-version: ["22", "24"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          registry-url: "https://registry.npmjs.org"
+          cache: npm
       - run: npm ci
       - run: npm run typecheck
       - run: npm test

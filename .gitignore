@@ -3,3 +3,4 @@ dist/
 *.log
 .pi/
 *.tgz
+assets/gallery.html

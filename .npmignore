@@ -1,8 +1,0 @@
-.git/
-.gitignore
-.github/
-.pi/
-dist/
-node_modules/
-*.log
-*.tgz
