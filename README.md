@@ -5,23 +5,25 @@
 
 A Pi Coding Agent extension for **fast, non-blocking, parallel side questions**.
 
-Ask quick side questions without interrupting the main agent, without bloating its context, and without waiting — all via keyboard shortcuts.
+![/btw answering a question in slot 2 while the main agent keeps working](assets/pi-btw-gallery.png)
+
+Ask quick side questions without interrupting the main agent and without bloating its context.
 
 ```text
 /btw What does resolveUser do?       → instant answer view
 /btw 2 Explain this error            → slot 2, independent
-Alt+I                                → inject slot answer into main chat
+/btw inject                          → hand the slot answer to the main agent
 ```
 
 ## Features
 
-- **⚡ Zero context overhead** — BTW runs in a separate RPC child process through Pi's resolved CLI entry (`node <pi-cli> --mode rpc --no-session`). No context bloat.
-- **🔒 Safe tool access** — Child sessions explicitly enable read-only tools (`read`, `grep`, `find`, `ls`) and do not recursively load extensions or MCP servers.
+- **⚡ Zero context overhead** — BTW runs in a separate RPC child process through Pi's resolved CLI entry (`node <pi-cli> --mode rpc --no-session --offline`). The main agent's context is never touched.
+- **🔒 Safe tool access** — Child sessions explicitly enable read-only tools (`read`, `grep`, `find`, `ls`) and run with `--no-extensions`, so no extension (including this one) loads recursively.
 - **🧵 Parallel slots** — 9 independent slots (1-9). Ask different questions simultaneously, each in its own session.
-- **🎯 Context scoping** — Smart strategies to include only the relevant context (`smart`, `last-n`, `budget`, `compact`, or `none`).
-- **📡 Streaming** — Answers appear token-by-token (Time To First Token < 500ms).
-- **🔇 Context isolation** — BTW entries are filtered out of the main agent's context automatically.
-- **💉 Answer injection** — `Alt+I` injects answers into main chat when you want them.
+- **🎯 Context scoping** — The first question in a slot carries a scoped slice of the main conversation so questions like "explain this error" work. Strategies: `smart`, `last-n`, `budget`, `compact`, `full`, or `none`.
+- **📡 Streaming** — Answers appear token-by-token. The first question in a slot pays a one-time child startup of roughly a second; later questions in that slot reuse the process.
+- **🔇 Context isolation** — Side questions and answers never enter the main agent's context unless you inject them.
+- **💉 Answer injection** — `/btw inject` hands the slot's answers to the main agent when you want them.
 - **📜 Session persistence** — Slot state survives `/resume`, `/fork`, and restarts.
 - **⌨️ Keyboard-first UI** — Scrollable answer view + full history browser.
 - **💰 Cost tracking** — Per-answer token/cost display.
@@ -57,27 +59,37 @@ pi install ./
 
 | Command | Description |
 |---------|-------------|
-| `/btw <question>` | Ask in the active slot (auto-creates slot 1). |
+| `/btw <question>` | Ask in the active slot (creates slot 1 if none exists). |
 | `/btw N <question>` | Ask in slot N (1-9). |
 | `/btw N` | Switch to slot N. |
+| `/btw inject` | Send the active slot's answers to the main agent, then clear the slot. |
+| `/btw clear` | Discard the active slot's answers. |
 | `/btw` | Open the side-question history browser. |
 
 ### Shortcuts
 
 | Key | Action |
 |-----|--------|
-| `Alt+I` | Inject answers from active slot into main chat, then clear. |
 | `Alt+X` | Clear active slot (discard answers). |
 | `Alt+H` | Previous slot. |
 | `Alt+L` | Next slot. |
 | `Alt+1…Alt+9` | Jump directly to slot N. |
+
+> Injection is `/btw inject`, not a keyboard shortcut. Terminals disagree about
+> how `Alt+<key>` is encoded, and extension shortcuts are delivered to the
+> editor, so they never fire while the answer view is open. A command works in
+> every terminal and from inside the answer view. If the `Alt+` keys above do
+> nothing in your terminal, use `/btw N` to switch slots and `/btw clear` to
+> clear one.
 
 ### Answer view
 
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Scroll answer. |
-| `Esc` | Dismiss view. |
+| `Esc` | Close the view. The answer keeps generating in the background and notifies you when done. |
+
+Run `/btw inject` after closing the view to hand the answer to the main agent.
 
 ### History browser
 
@@ -103,7 +115,7 @@ Global settings at `~/.pi/agent/btw-settings.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `maxTokens` | `1000` | Max output tokens per answer. |
+| `maxTokens` | `1000` | Max output tokens per answer. Applies to the inline fallback only; the RPC child uses the model's own limit. |
 | `maxContextTokens` | `8000` | Max context tokens to include (strategy-dependent). |
 | `strategy` | `"smart"` | Context scoping: `"smart"`, `"last-n"`, `"budget"`, `"compact"`, `"none"`, `"full"`. |
 | `recentExchanges` | `8` | Recent exchanges to keep when strategy is `"last-n"`. |
@@ -120,7 +132,10 @@ Global settings at `~/.pi/agent/btw-settings.json`:
 | `"smart"` | Skip tool results, stay within budget. | ~2-8k |
 | `"last-n"` | Keep N recent exchanges. | ~4-10k |
 | `"budget"` | Walk backwards up to token budget. | Configurable |
-| `"full"` | All context (legacy behavior). | 100k+ |
+| `"full"` | All context. | 100k+ |
+
+Context is sent once per slot, on the first question. Follow-up questions in the
+same slot reuse the child's own conversation instead of resending it.
 
 ### Per-slot model example
 
@@ -153,14 +168,18 @@ src/
 ```
 User: /btw 2 "explain this error"
   │
-  ├─ resolveBtwModel(slotIndex=1) → check slotModels[1] → ctx.model fallback
   ├─ ensureSlot(state, 1) → create/switch to slot 2
-  ├─ BtwChild.spawn(process.execPath, "<resolved pi-cli> --mode rpc --no-session --tools read,grep,find,ls")
-  │   └─ JSONL RPC: { type: "prompt", message, streamingBehavior: "followUp" }
-  │   └─ Events: message_update (streaming) → agent_end/agent_settled (done)
-  ├─ onPartial(text) → state.text = text → tui.requestRender()
-  ├─ User sees streaming answer
-  └─ Alt+I → pi.sendUserMessage(injectionText()) → inject into main chat
+  ├─ resolveBtwModel(slotIndex=1) → slotModels[1] → btwProvider/btwModelId → ctx.model
+  ├─ provider visible to a --no-extensions child? no → inline fallback, with a warning
+  ├─ queueQuestionToSlot() → push turn onto slot 2's serial queue
+  │   ├─ BtwChild.spawn(process.execPath, "<pi-cli> --mode rpc --no-session --offline --tools read,grep,find,ls")
+  │   ├─ first turn only: prepend scoped main-session context
+  │   ├─ JSONL RPC: { type: "prompt", message, streamingBehavior: "followUp" }
+  │   ├─ Events: message_update (streaming) → agent_end/agent_settled (done)
+  │   └─ on failure: drop the dead child, answer inline, mark the turn viaFallback
+  ├─ turn.partial → answer view redraws (Esc closes the view, turn keeps running)
+  ├─ turn settles → usage recorded per turn, persisted with its slot number
+  └─ /btw inject → pi.sendUserMessage(injectionText(slot.turns)) → into the main chat
 ```
 
 ## Development
@@ -168,9 +187,24 @@ User: /btw 2 "explain this error"
 ```bash
 npm install
 npm run typecheck    # tsc --noEmit (zero errors expected)
-npm test             # launcher + RPC handshake tests
-BTW_SMOKE_MODEL=provider/model npm run smoke:rpc  # one real read-tool smoke test
-# PowerShell: $env:BTW_SMOKE_MODEL="provider/model"; npm run smoke:rpc
+npm test             # unit tests, extension harness, TUI render, RPC handshake
+```
+
+Two checks need real credentials and spend tokens, so they are not part of
+`npm test`:
+
+```bash
+# One real read-tool call through the RPC child.
+BTW_SMOKE_MODEL=provider/model npm run smoke:rpc
+
+# Full flow in a real Pi session: cold start, tools, slot reuse, slot
+# exhaustion, answer injection, restore after restart.
+BTW_E2E_MODEL=provider/model npm run e2e
+```
+
+```powershell
+# PowerShell
+$env:BTW_E2E_MODEL="provider/model"; npm run e2e
 ```
 
 ## Package structure
@@ -180,8 +214,6 @@ pi-btw/
 ├── package.json              Pi + npm package metadata
 ├── README.md                 This file
 ├── CHANGELOG.md
-├── BENCHMARK.md              Performance benchmark guide
-├── BTW-IMPROVEMENT-PLAN.md   Full architecture improvement plan
 ├── LICENSE                   MIT
 ├── assets/
 │   └── pi-btw-gallery.png
@@ -191,8 +223,24 @@ pi-btw/
 │   ├── btw-child.ts          RPC child process
 │   ├── session-state.ts      Slot state management
 │   └── types.ts              Shared types
+├── scripts/
+│   ├── build-gallery.mjs     Regenerates the gallery image's HTML source
+│   ├── e2e-btw.mts           Live end-to-end check
+│   ├── e2e-probe.ts          Probe extension used by the e2e check
+│   └── rpc-tool-smoke.mts    Live read-tool smoke test
+├── test/
+│   ├── btw-child.test.mts    Launcher, handshake, error formatting
+│   ├── extension.test.mts    Shortcuts, context filter, TUI rendering
+│   └── session-state.test.mts  Slot allocation, queue, persistence
 └── tsconfig.json
 ```
+
+## Security and limits
+
+- The child runs in your project's working directory with `read`, `grep`, `find`, and `ls`. A side question can read files the main agent can read. It cannot write, edit, or run shell commands.
+- The child inherits the parent process environment, including provider credentials. That is what lets it use the same model without a second login.
+- Providers registered by another extension via `pi.registerProvider()` are invisible to the child, which runs with `--no-extensions`. BTW detects this up front and answers inline (no tools) with a warning. Set `btwProvider`/`btwModelId` to a built-in provider or one from `models.json` for full `/btw`.
+- Logs go to `~/.pi/agent/btw.log` and roll over at 512 KB.
 
 ## License
 
