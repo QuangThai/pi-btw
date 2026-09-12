@@ -5,9 +5,15 @@
  * Each slot has its own BtwChild (RPC process) and queue chain.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { BtwChild } from "./btw-child.ts";
-import { BtwSlot, BtwSlotState, BtwTurn, MAX_BTW_SLOTS } from "./types.ts";
+import {
+  type BtwChildHandle,
+  type BtwSlot,
+  type BtwSlotState,
+  type BtwTurn,
+  type BtwUsage,
+  MAX_BTW_SLOTS,
+} from "./types.ts";
 
 // ── Initial state ──
 
@@ -42,9 +48,24 @@ function makeSlot(index: number): BtwSlot {
   };
 }
 
+/**
+ * Index of the first unused slot, or `undefined` when all 9 are taken.
+ * Callers must handle the exhausted case instead of letting it become an
+ * out-of-range index.
+ */
+export function freeSlotIndex(state: BtwSlotState): number | undefined {
+  for (let i = 0; i < MAX_BTW_SLOTS; i++) {
+    if (!state.slots[i]) return i;
+  }
+  return undefined;
+}
+
 function lowestFreeIndex(state: BtwSlotState): number {
-  const idx = state.slots.findIndex((s) => !s);
-  return idx === -1 ? state.slots.length : idx;
+  const idx = freeSlotIndex(state);
+  if (idx === undefined) {
+    throw new Error(`All ${MAX_BTW_SLOTS} BTW slots are in use. Clear one with Alt+X first.`);
+  }
+  return idx;
 }
 
 // ── Slot CRUD ──
@@ -212,91 +233,231 @@ export function injectionText(turns: BtwTurn[]): string {
 
 // ── Queue question to a slot ──
 
-export function queueQuestionToSlot(args: {
-  ctx: ExtensionContext;
-  pi: ExtensionAPI;
-  question: string;
+/** How an answer was produced, so the UI can label degraded results. */
+export interface AskOutcome {
+  answer?: string;
+  usage?: BtwUsage;
+  error?: string;
+  viaFallback?: boolean;
+}
+
+export interface QueueQuestionArgs {
   state: BtwSlotState;
+  /** Slot to run in. Defaults to the active slot, creating one if needed. */
+  slot?: BtwSlot;
+  question: string;
   provider: string;
   modelId: string;
-  onRender?: (ctx: ExtensionContext, state: BtwSlotState) => void;
-}): void {
-  const { ctx, pi, question, state, provider, modelId, onRender } = args;
-  const slot = activeSlot(state) ?? createSlot(state);
+  cwd: string;
+  /**
+   * Context block for the first turn of a child process. The child keeps its
+   * own conversation, so later turns in the same slot do not resend it.
+   */
+  contextMessage?: string;
+  /**
+   * Called on every state change so the caller can re-render. The turn is
+   * passed in because the caller's binding for it does not exist yet the
+   * first time this fires.
+   */
+  onUpdate?: (turn: BtwTurn) => void;
+  /**
+   * Used when the RPC child cannot be started or dies mid-answer. Receives the
+   * underlying RPC error so the caller can report why it degraded. Returning an
+   * answer here marks the turn as `viaFallback`.
+   */
+  onFallback?: (
+    question: string,
+    onPartial: (text: string) => void,
+    rpcError: string,
+  ) => Promise<AskOutcome>;
+  /** Persist the settled turn. Failures are swallowed: a stale API is expected. */
+  persist?: (slot: BtwSlot, turn: BtwTurn) => void;
+  /** Injection point for tests. Defaults to spawning a real BtwChild. */
+  createChild?: (
+    cwd: string,
+    provider: string,
+    modelId: string,
+    onUpdate: () => void,
+  ) => BtwChildHandle;
+}
+
+/**
+ * Append a question to a slot's serial queue.
+ *
+ * Questions in the same slot run one at a time against a shared child process;
+ * different slots run in parallel. Returns the turn (already visible in
+ * `slot.turns`, so the UI can render it while it is still queued) plus a
+ * promise that settles when the turn finishes.
+ */
+export function queueQuestionToSlot(args: QueueQuestionArgs): {
+  turn: BtwTurn;
+  done: Promise<BtwTurn>;
+} {
+  const {
+    state,
+    question,
+    provider,
+    modelId,
+    cwd,
+    contextMessage,
+    onUpdate,
+    onFallback,
+    persist,
+    createChild,
+  } = args;
+  const slot = args.slot ?? activeSlot(state) ?? createSlot(state);
 
   const turn: BtwTurn = {
     question,
     startedAt: Date.now(),
     status: "queued",
+    modelId,
   };
   slot.turns.push(turn);
   state.folded = false;
   slot.unread = false;
-  onRender?.(ctx, state);
+  onUpdate?.(turn);
 
   const generation = slot.generation;
+  const spawnChild =
+    createChild ??
+    ((childCwd, childProvider, childModelId, notify) =>
+      new BtwChild(childCwd, childProvider, childModelId, notify));
 
-  slot.queue = slot.queue
+  const done = slot.queue
     .catch(() => undefined)
-    .then(async () => {
-      // Skip if generation changed while queued
-      if (slot.generation !== generation) return;
+    .then(async (): Promise<BtwTurn> => {
+      // The slot was cleared or replaced while this turn sat in the queue.
+      if (slot.generation !== generation) {
+        turn.status = "failed";
+        turn.error ??= "Slot cleared before this question ran.";
+        return turn;
+      }
 
       slot.running = true;
       turn.status = "running";
       turn.turnIndex ??= slot.nextTurnIndex++;
-      onRender?.(ctx, state);
+      onUpdate?.(turn);
 
-      const childBeforeTurn = slot.child;
+      const onPartial = (partial: string) => {
+        if (slot.generation !== generation) return;
+        turn.partial = partial;
+        onUpdate?.(turn);
+      };
+
       try {
+        let isNewChild = false;
         if (!slot.child) {
-          slot.child = new BtwChild(ctx.cwd, provider, modelId, () => onRender?.(ctx, state));
+          slot.child = spawnChild(cwd, provider, modelId, () => onUpdate?.(turn));
+          isNewChild = true;
           await slot.child.ready();
         }
 
-        if (slot.generation !== generation) return;
+        if (slot.generation !== generation) {
+          turn.status = "failed";
+          turn.error ??= "Slot cleared while this question was running.";
+          return turn;
+        }
 
-        turn.answer = await slot.child.ask(question, (partial) => {
-          turn.partial = partial;
-          onRender?.(ctx, state);
-        }) || "(no answer)";
+        // Only the first turn of a child needs the main-session context; after
+        // that the child's own history already carries it.
+        const sendContext = isNewChild || !slot.contextSent;
+        const answer = await slot.child.ask(
+          question,
+          onPartial,
+          sendContext ? contextMessage : undefined,
+        );
+        if (sendContext && contextMessage) slot.contextSent = true;
 
+        turn.answer = answer || "(no answer)";
+        turn.usage = toUsage(slot.child.details.lastAskUsage);
         slot.restored = false;
-        delete turn.partial;
         turn.status = "answered";
       } catch (error) {
-        if (slot.child && slot.child === (childBeforeTurn ?? slot.child)) {
-          const failedChild = slot.child;
+        // Never keep a dead child in the slot: the next question should get a
+        // fresh process rather than failing the same way again.
+        const failedChild = slot.child;
+        // Capture stderr before stopping: it is the only clue for spawn
+        // failures, which produce a message with no other detail.
+        const stderr = failedChild?.details.stderr.trim() ?? "";
+        if (failedChild) {
           slot.child = undefined;
+          slot.contextSent = false;
           try { await failedChild.stop(); } catch { /* already closed */ }
         }
-        if (slot.generation !== generation) return;
-        turn.error = error instanceof Error ? error.message : String(error);
-        turn.status = "failed";
+        if (slot.generation !== generation) {
+          turn.status = "failed";
+          turn.error ??= "Slot cleared while this question was running.";
+          return turn;
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+        // The child folds stderr into its own errors; only append when it is
+        // genuinely new information.
+        const rpcError = stderr && !message.includes(stderr)
+          ? `${message} Stderr: ${stderr}`
+          : message;
+        if (onFallback) {
+          try {
+            const outcome = await onFallback(question, onPartial, rpcError);
+            if (slot.generation !== generation) {
+              turn.status = "failed";
+              turn.error ??= "Slot cleared while this question was running.";
+              return turn;
+            }
+            turn.viaFallback = true;
+            if (outcome.error) {
+              turn.error = outcome.error;
+              turn.status = "failed";
+            } else {
+              turn.answer = outcome.answer || "(no answer)";
+              turn.usage = outcome.usage;
+              turn.status = "answered";
+            }
+          } catch (fallbackError) {
+            turn.error = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+            turn.status = "failed";
+          }
+        } else {
+          turn.error = rpcError;
+          turn.status = "failed";
+        }
       } finally {
         turn.finishedAt = Date.now();
+        delete turn.partial;
         slot.running = false;
         slot.unread = !(state.activeIndex === slot.index && !state.folded);
-        onRender?.(ctx, state);
+        onUpdate?.(turn);
 
-        // Persist turn result
         if (turn.answer || turn.error) {
           try {
-            pi.appendEntry("btw-entry", {
-              kind: "result",
-              slot: slot.index + 1,
-              generation: slot.generationId,
-              turn: turn.turnIndex,
-              question: turn.question,
-              answer: turn.answer,
-              error: turn.error,
-              startedAt: turn.startedAt,
-              finishedAt: turn.finishedAt,
-            });
+            persist?.(slot, turn);
           } catch {
-            // stale api
+            // Stale extension API after a session replacement.
           }
         }
       }
+      return turn;
     });
+
+  // The queue chain must survive a failing turn, and it must not surface an
+  // unhandled rejection when the caller only cares about `done`.
+  slot.queue = done.then(
+    () => undefined,
+    () => undefined,
+  );
+
+  return { turn, done };
+}
+
+function toUsage(raw: BtwChildHandle["details"]["lastAskUsage"]): BtwUsage | undefined {
+  if (!raw) return undefined;
+  if (!raw.input && !raw.output && !raw.cost) return undefined;
+  return {
+    input: raw.input,
+    output: raw.output,
+    cacheRead: raw.cacheRead,
+    cacheWrite: raw.cacheWrite,
+    totalCost: raw.cost,
+  };
 }

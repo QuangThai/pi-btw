@@ -18,9 +18,10 @@ import type { BtwChildHandle, ChildDetails, RpcEvent } from "./types.ts";
 
 // ── Defaults ──
 
-const READY_TIMEOUT = 15_000;     // 15s for child to become ready
-const RESPONSE_TIMEOUT = 120_000; // 2min for a response
-const SHUTDOWN_GRACE = 2_000;     // 2s grace before SIGKILL
+const READY_TIMEOUT = 15_000;      // 15s for child to become ready
+const RESPONSE_TIMEOUT = 120_000;  // 2min for a command response
+const SETTLEMENT_TIMEOUT = 300_000; // 5min for a full answer to settle
+const SHUTDOWN_GRACE = 2_000;      // 2s grace before SIGKILL
 const AGENT_END_SETTLEMENT_GRACE = 250;
 const CHILD_TOOLS = "read,grep,find,ls";
 
@@ -59,6 +60,9 @@ export function buildPiRpcInvocation(provider: string, modelId: string): BtwRpcI
       ...(cliPath ? [cliPath] : []),
       "--mode", "rpc",
       "--no-session",
+      // A child lives for seconds. Startup package/update network calls are
+      // pure latency here, so opt out of them.
+      "--offline",
       "--model", `${provider}/${modelId}`,
       // BTW is a read-only side session. Do not load extensions recursively;
       // custom/MCP tools must be explicitly bridged rather than inherited.
@@ -102,6 +106,24 @@ function getPartialText(msg: Message): string {
   return "";
 }
 
+/**
+ * Condense a provider error for display.
+ *
+ * Providers sometimes return a full HTML error page. Keep the leading status
+ * line, drop the markup, and cap the length so the notice stays readable.
+ */
+export function summarizeProviderError(raw: string, max = 300): string {
+  const stripped = raw
+    .replace(/<!DOCTYPE[^>]*>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const text = stripped || raw.trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 /** Get the final assistant text from a list of messages */
 function getFinalOutput(messages: Message[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -118,13 +140,14 @@ function getFinalOutput(messages: Message[]): string {
 
     // Case 2: content is an array of content parts
     if (Array.isArray(content)) {
-      let textParts: string[] = [];
+      const textParts: string[] = [];
+      const answerParts: string[] = [];
       for (const part of content) {
         if (!part || typeof part !== "object") continue;
         const p = part as any;
         // Standard text content
         if (p.type === "text" && typeof p.text === "string") {
-          if (p.text.trim()) textParts.push(p.text);
+          if (p.text.trim()) { textParts.push(p.text); answerParts.push(p.text); }
         }
         // DeepSeek / reasoning thinking content
         if (p.type === "thinking" && typeof p.thinking === "string") {
@@ -136,13 +159,11 @@ function getFinalOutput(messages: Message[]): string {
           if (t.trim()) textParts.push(t);
         }
       }
-      // If we found any text parts, join them. For final messages,
-      // prefer the LAST text part (the actual answer, not the thinking).
-      if (textParts.length > 0) {
-        // Return the last non-thinking text part, or all joined if only thinking
-        const lastText = textParts[textParts.length - 1]!;
-        return lastText;
-      }
+      // Prefer the real answer over reasoning: if the model emitted plain
+      // text parts, join those and drop the thinking. Only fall back to the
+      // reasoning stream when there is no plain text at all.
+      if (answerParts.length > 0) return answerParts.join("\n\n").trim();
+      if (textParts.length > 0) return textParts.join("\n\n").trim();
     }
   }
   return "";
@@ -264,13 +285,21 @@ export class BtwChild implements BtwChildHandle {
   ): Promise<string> {
     const before = this.settledCount;
     const beforeMessages = this.details.messages.length;
+    // The child keeps one running total across its lifetime, so snapshot it
+    // here to report usage for this answer alone.
+    const beforeUsage = { ...this.details.usage };
     this.currentPartial = "";
     this.onPartial = onPartial;
+    // Scope stop/error reporting to this ask so a provider failure here is not
+    // confused with one from an earlier question in the same slot.
+    this.details.stopReason = undefined;
+    this.details.errorMessage = undefined;
 
     try {
-      const messageText = contextMessage ?? [
+      const messageText = [
         "Answer the user's question directly.",
         "Be concise unless the question requires detail.",
+        ...(contextMessage ? [contextMessage] : []),
         `Question: ${question}`,
       ].join("\n\n");
 
@@ -281,24 +310,70 @@ export class BtwChild implements BtwChildHandle {
       });
 
       await this.waitForSettlement(before);
-      return (
+      const answer = (
         getFinalOutput(this.details.messages.slice(beforeMessages)) ||
         this.currentPartial
       ).trim();
+      // A provider failure inside the child settles the turn with an error
+      // message and no text. Surface it instead of reporting an empty answer.
+      if (!answer && (this.details.stopReason === "error" || this.details.errorMessage)) {
+        throw new Error(
+          this.details.errorMessage
+            ? `btw child could not answer: ${summarizeProviderError(this.details.errorMessage)}`
+            : "btw child could not answer (provider returned an error)",
+        );
+      }
+      return answer;
     } finally {
       this.onPartial = undefined;
+      this.details.lastAskUsage = {
+        input: this.details.usage.input - beforeUsage.input,
+        output: this.details.usage.output - beforeUsage.output,
+        cacheRead: this.details.usage.cacheRead - beforeUsage.cacheRead,
+        cacheWrite: this.details.usage.cacheWrite - beforeUsage.cacheWrite,
+        cost: this.details.usage.cost - beforeUsage.cost,
+      };
+    }
+  }
+
+  /**
+   * Stop the in-flight turn but keep the process alive so the slot can be
+   * reused. Never rejects: aborting a child that already died is a no-op.
+   */
+  async abort(): Promise<void> {
+    if (this.closed || this.processError) return;
+    try {
+      await this.send({ type: "abort" }, RESPONSE_TIMEOUT);
+    } catch {
+      // The child is gone or unresponsive; stop() is the caller's fallback.
     }
   }
 
   async stop(): Promise<void> {
     if (this.closed) return;
     this.proc.kill("SIGTERM");
-    await Promise.race([
-      new Promise<void>((resolve) => this.proc.once("close", () => resolve())),
-      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_GRACE)).then(() => {
-        if (!this.closed) this.proc.kill("SIGKILL");
-      }),
-    ]);
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(killTimer);
+        this.proc.off("close", onClose);
+        resolve();
+      };
+      const onClose = () => finish();
+      // SIGTERM is advisory. Escalate to SIGKILL, then wait for the real close
+      // so callers know the process is actually gone before they continue.
+      const killTimer = setTimeout(() => {
+        if (this.closed) return finish();
+        this.proc.kill("SIGKILL");
+        // Give the OS a moment to reap it, then stop waiting regardless.
+        setTimeout(finish, SHUTDOWN_GRACE).unref?.();
+      }, SHUTDOWN_GRACE);
+      killTimer.unref?.();
+      this.proc.once("close", onClose);
+      if (this.closed) finish();
+    });
   }
 
   // ── Internal: Settlement waiting ──
@@ -313,7 +388,22 @@ export class BtwChild implements BtwChildHandle {
       );
     }
     return new Promise<void>((resolve, reject) => {
-      this.settleWaiters.add({ after, resolve, reject });
+      // A child that stops emitting events must not hang the slot forever.
+      const timeout = setTimeout(() => {
+        this.settleWaiters.delete(waiter);
+        reject(
+          new Error(
+            `btw child did not finish within ${Math.round(SETTLEMENT_TIMEOUT / 1000)}s`,
+          ),
+        );
+      }, SETTLEMENT_TIMEOUT);
+      timeout.unref?.();
+      const waiter = {
+        after,
+        resolve: () => { clearTimeout(timeout); resolve(); },
+        reject: (error: Error) => { clearTimeout(timeout); reject(error); },
+      };
+      this.settleWaiters.add(waiter);
     });
   }
 
@@ -391,7 +481,19 @@ export class BtwChild implements BtwChildHandle {
   private handleResponse(data: RpcEvent): boolean {
     if (data.type !== "response") return false;
     const id = data.id;
-    if (typeof id !== "string" || !this.pending.has(id)) return false;
+    if (typeof id !== "string" || !this.pending.has(id)) {
+      // Protocol-level failures (for example a parse error) come back without
+      // a request id. Fail fast instead of letting every request time out.
+      if (data.success === false) {
+        const error = new Error(
+          String((data as any).error ?? `RPC ${(data as any).command ?? "command"} failed`),
+        );
+        this.rejectAll(error);
+        this.rejectSettlementWaiters(error);
+        return true;
+      }
+      return false;
+    }
     const pending = this.pending.get(id)!;
     clearTimeout(pending.timeout);
     this.pending.delete(id);

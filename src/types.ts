@@ -42,6 +42,12 @@ export interface BtwTurn {
   finishedAt?: number;
   status?: "queued" | "running" | "answered" | "failed";
   turnIndex?: number;
+  /** Usage for this turn only, not the running total for the slot. */
+  usage?: BtwUsage;
+  /** Model that actually produced this turn. */
+  modelId?: string;
+  /** True when the RPC child was unavailable and the inline fallback answered. */
+  viaFallback?: boolean;
 }
 
 export interface BtwSlot {
@@ -55,6 +61,11 @@ export interface BtwSlot {
   generation: number;
   queue: Promise<void>;
   restored?: boolean;
+  /**
+   * The RPC child keeps its own conversation, so main-session context only has
+   * to be sent on the first turn of each child process.
+   */
+  contextSent?: boolean;
 }
 
 export interface BtwSlotState {
@@ -73,8 +84,11 @@ export interface BtwChildHandle {
   ask(
     question: string,
     onPartial?: (text: string) => void,
+    /** Extra context block prepended to the question, not a replacement for it. */
     contextMessage?: string,
   ): Promise<string>;
+  /** Ask the child to stop the current turn without killing the process. */
+  abort(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -92,6 +106,14 @@ export interface ChildDetails {
     cacheWrite: number;
     cost: number;
     contextTokens: number;
+  };
+  /** Usage attributable to the most recent ask() only. */
+  lastAskUsage?: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    cost: number;
   };
   stopReason?: string;
   errorMessage?: string;
