@@ -23,6 +23,7 @@ import { stream, type UserMessage, type AssistantMessageEventStream } from "@ear
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import {
+  buildSessionContext,
   convertToLlm,
   getAgentDir,
   getMarkdownTheme,
@@ -332,25 +333,22 @@ function estimateTokens(m: AgentMessage): number {
   return Math.ceil(JSON.stringify(m).length / 4);
 }
 
-function collectSmartContext(ctx: ExtensionContext): AgentMessage[] {
-  const s = btwSettings;
-  const raw: AgentMessage[] = [];
-  let latestCompaction: AgentMessage | null = null;
+export function collectSmartContext(
+  ctx: ExtensionContext,
+  s: BtwSettings = btwSettings,
+): AgentMessage[] {
+  if (s.strategy === "none") return [];
 
-  for (const e of ctx.sessionManager.getBranch()) {
-    if (e.type === "message") raw.push(e.message);
-    else if (e.type === "compaction") {
-      const cm: AgentMessage = {
-        role: "compactionSummary" as AgentMessage["role"],
-        summary: e.summary, tokensBefore: e.tokensBefore, timestamp: new Date(e.timestamp).getTime(),
-      } as unknown as AgentMessage;
-      latestCompaction = cm;
-      raw.push(cm);
-    }
+  // Resolve compaction boundaries and context edits before applying BTW's scope.
+  const raw = buildSessionContext(ctx.sessionManager.getBranch()).messages.filter(
+    (m) => !["system"].includes(m.role) && !(m.role === "custom" && m.customType === "btw-entry"),
+  );
+  let latestCompaction: AgentMessage | null = null;
+  for (const m of raw) {
+    if (m.role === "compactionSummary") latestCompaction = m;
   }
 
   if (s.strategy === "full" || s.maxContextTokens <= 0) return raw;
-  if (s.strategy === "none") return [];
 
   if (s.strategy === "compact") {
     if (latestCompaction) {

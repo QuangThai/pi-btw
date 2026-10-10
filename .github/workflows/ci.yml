@@ -36,3 +36,17 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm pack --dry-run
+
+  context-current-pi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Install Pi with canonical context edits
+        run: npm install --no-save --package-lock=false --ignore-scripts @earendil-works/pi-ai@1.1.0 @earendil-works/pi-agent-core@1.1.0 @earendil-works/pi-coding-agent@1.1.0 @earendil-works/pi-tui@1.1.0
+      - name: Check side-question context against Pi 1.1.0
+        run: node --experimental-transform-types --test test/context.test.mts
