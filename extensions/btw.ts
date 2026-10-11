@@ -432,6 +432,32 @@ async function resolveBtwModel(
   return { model: ctx.model, auth: auth as any };
 }
 
+type InlineStreamArgs = Parameters<typeof stream>;
+
+/** The registry streaming Pi 0.86+ hands extensions, resolving auth per request. */
+interface RegistryWithStream {
+  stream?: (...args: InlineStreamArgs) => AssistantMessageEventStream;
+}
+
+/**
+ * Stream an inline answer through the session's model registry when it can.
+ *
+ * Pi 0.86 added `ctx.modelRegistry.stream()`, which dispatches through the
+ * configured provider, so a provider an extension registered with its own API
+ * answers as well. pi-ai's global `stream()` knows only built-in APIs and
+ * throws "No API provider registered" for those. Both take the same
+ * API-specific options, so built-in providers get the identical request; older
+ * Pi keeps the global call.
+ */
+export function streamInlineAnswer(
+  registry: unknown,
+  ...[model, context, options]: InlineStreamArgs
+): AssistantMessageEventStream {
+  const own = registry as RegistryWithStream | undefined;
+  if (typeof own?.stream === "function") return own.stream(model, context, options);
+  return stream(model, context, options);
+}
+
 async function fallbackAskStreaming(
   ctx: ExtensionContext,
   question: string,
@@ -449,7 +475,7 @@ async function fallbackAskStreaming(
       timestamp: Date.now(),
       content: [{ type: "text", text: `## Current Context\n\n${conv}\n\n## Question\n\n${question}` }],
     };
-    const eventStream: AssistantMessageEventStream = stream(model, { systemPrompt: PROMPT, messages: [msg] }, {
+    const eventStream = streamInlineAnswer(ctx.modelRegistry, model, { systemPrompt: PROMPT, messages: [msg] }, {
       apiKey: auth.apiKey, headers: auth.headers, env: auth.env, signal, maxTokens: btwSettings.maxTokens,
     });
 
@@ -460,6 +486,12 @@ async function fallbackAskStreaming(
       if (event.type === "text_delta") {
         answer += event.delta;
         onPartial(answer);
+      } else if (event.type === "error" && event.reason === "error" && !answer) {
+        // The registry stream reports a request that could not start (unknown
+        // API, missing auth) as an event rather than a throw; surface it the
+        // same way so the answer names the cause instead of coming back empty.
+        // A failure after text arrived keeps the partial answer, as before.
+        throw new Error(event.error?.errorMessage || `Request to ${model.id} failed.`);
       } else if (event.type === "done" && event.message) {
         const m = event.message;
         usage = {

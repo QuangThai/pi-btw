@@ -581,3 +581,64 @@ test("the probe falls back to ModelRegistry.create on Pi before 0.80.8", async (
   assert.equal(received, authStorage);
   await assert.rejects(listChildVisibleModels({ modelRegistry: {} } as any, {}), /neither ModelRuntime/);
 });
+
+/** Ask one question on the inline path and return the persisted turn. */
+async function askInline(h: ReturnType<typeof makeHarness>): Promise<any> {
+  await h.fire("session_start", { reason: "startup" });
+  const { pending } = await openAnswerView(h, { id: "test-model", provider: "test-provider" });
+  h.component()?.input(KEY.escape);
+  await pending;
+  return h.appended.find((e) => e.customType === "btw-entry")?.data;
+}
+
+test("the inline answer streams through ctx.modelRegistry.stream when Pi provides it", async () => {
+  const h = makeHarness();
+  const calls: any[] = [];
+  (h.ctx.modelRegistry as any).stream = (model: any, context: any, options: any) => {
+    calls.push({ model, context, options });
+    return (async function* () {
+      yield { type: "text_delta", delta: "REGISTRY-ANSWER" };
+      yield { type: "done", message: { usage: { input: 3, output: 5, cost: { total: 0 } } } };
+    })();
+  };
+  const turn = await askInline(h);
+  assert.equal(turn?.answer, "REGISTRY-ANSWER", JSON.stringify(turn));
+  assert.equal(turn?.error, undefined);
+  // The same request the global stream() received: model, prompt, and options.
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].model.provider, "test-provider");
+  assert.match(calls[0].context.messages[0].content[0].text, /why is the sky blue/);
+  assert.ok(calls[0].context.systemPrompt);
+  assert.equal(calls[0].options.apiKey, "test-key");
+  assert.ok(calls[0].options.signal instanceof AbortSignal);
+  assert.equal(typeof calls[0].options.maxTokens, "number");
+});
+
+test("a registry stream that fails to start reports its cause", async () => {
+  const h = makeHarness();
+  (h.ctx.modelRegistry as any).stream = () => (async function* () {
+    yield { type: "error", reason: "error", error: { errorMessage: "No API provider registered for api: custom-api" } };
+  })();
+  const turn = await askInline(h);
+  assert.match(turn?.error ?? "", /No API provider registered for api: custom-api/, JSON.stringify(turn));
+});
+
+test("without ctx.modelRegistry.stream the inline answer keeps pi-ai's stream()", async () => {
+  const h = makeHarness();
+  assert.equal((h.ctx.modelRegistry as any).stream, undefined);
+  const turn = await askInline(h);
+  // The fake model has no provider or API pi-ai knows, so the global stream()
+  // rejects it (worded "Unknown provider" or "No API provider" by version).
+  assert.match(turn?.error ?? "", /Unknown provider|No API provider registered/, JSON.stringify(turn));
+});
+
+test("a stream that fails after text arrived keeps the partial answer, as before", async () => {
+  const h = makeHarness();
+  (h.ctx.modelRegistry as any).stream = () => (async function* () {
+    yield { type: "text_delta", delta: "PARTIAL-ANSWER" };
+    yield { type: "error", reason: "error", error: { errorMessage: "connection reset" } };
+  })();
+  const turn = await askInline(h);
+  assert.equal(turn?.answer, "PARTIAL-ANSWER", JSON.stringify(turn));
+  assert.equal(turn?.error, undefined);
+});
