@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-10-11
+
+### Fixed
+
+- **A provider registered by an extension spawned a doomed child again.**
+  The pre-flight check that sends such providers straight to the inline
+  answer called `ModelRegistry.create(authStorage)`, which Pi 0.80.8 removed.
+  The check failed silently, every `/btw` spawned a child that exited on
+  `Model not found`, and the notice read `BTW RPC unavailable … exited with
+  code 1` instead of naming the provider. The check now reads the agent
+  directory through `ModelRuntime.create()` (older Pi keeps the previous
+  path), so the inline answer starts at once with the intended notice.
+  Built-in and `models.json` providers keep the tool-enabled child.
+
+### Changed
+
+- The child starts from the file the `pi` command runs. On Pi 1.x that is
+  the single-file bundle, which is ready in about 0.2–0.45 s instead of
+  0.9–1.2 s on Windows; older Pi still starts from `dist/cli.js`.
+
+### Tests
+
+- The suite runs against a throwaway agent directory. It used to write
+  `btw.log`, `auth.json`, and `settings.json` into the real `~/.pi/agent`.
+- Both probe paths are covered with an injected SDK, and the pre-flight
+  notice is asserted end to end.
+
 ## [1.2.0] - 2026-09-12
 
 Slot plumbing that was written but never connected is now wired into the
