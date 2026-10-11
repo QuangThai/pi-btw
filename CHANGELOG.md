@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.2.2] - 2026-10-11
+
+### Fixed
+
+- **The inline answer failed for providers with their own API.** When /btw
+  answers inline (no tool-enabled child), it called pi-ai's global `stream()`,
+  which knows only built-in APIs, so a provider whose extension registered its
+  own API failed with `No API provider registered for api: …`. On Pi 0.86 and
+  later the inline answer now streams through `ctx.modelRegistry.stream()`,
+  which dispatches through the configured provider with the same request
+  options. Built-in providers, and providers that reuse a built-in API, send
+  the same request as before; older Pi keeps the global `stream()`.
+- A request that cannot start (unknown API, missing auth) now reports its own
+  cause instead of an empty answer replaced by the RPC child's error. A
+  failure after text arrived still keeps the partial answer, as before.
+
+### Tests
+
+- Development and CI run against Pi 1.1.0 (`@earendil-works/*` dev
+  dependencies pinned to 1.1.0; peer dependencies stay `*`, only their key
+  order changed). The legacy probe and global-stream paths stay covered with
+  injected fakes.
+- The inline answer is covered through the registry stream, its error event
+  before and after text, and without it.
+
 ## [1.2.1] - 2026-10-11
 
 ### Fixed
