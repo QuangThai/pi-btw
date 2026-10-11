@@ -5,9 +5,12 @@
  * keyboard shortcuts, the TUI components, and the context filter. The views
  * are rendered for real, so a crash or a bad slice shows up here.
  */
+import "./support/agent-dir.mts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AuthStorage, initTheme, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { tmpdir } from "node:os";
+import { AuthStorage, getAgentDir, initTheme, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { TEST_AGENT_DIR } from "./support/agent-dir.mts";
 import btwExtension from "../extensions/btw.ts";
 
 /** Raw terminal sequences: matchesKey() compares input bytes, not key names. */
@@ -514,4 +517,11 @@ test("a settled turn is persisted even when every path failed", async () => {
   assert.equal(entries[0]!.data.slot, 0, "persisted turns must carry their slot");
   assert.equal(entries[0]!.data.turn, 1);
   assert.ok(entries[0]!.data.error, "a failure must be recorded as an error, not an empty answer");
+});
+
+test("tests run against a throwaway agent directory, not ~/.pi/agent", () => {
+  // The extension's log and settings, the registry probe, and RPC children all
+  // resolve this directory; test/support/agent-dir.mts points it at a temp dir.
+  assert.equal(getAgentDir(), TEST_AGENT_DIR);
+  assert.ok(TEST_AGENT_DIR.startsWith(tmpdir()), TEST_AGENT_DIR);
 });
