@@ -9,9 +9,10 @@ import "./support/agent-dir.mts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { AuthStorage, getAgentDir, initTheme, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import * as piSdk from "@earendil-works/pi-coding-agent";
+import { getAgentDir, initTheme, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { TEST_AGENT_DIR } from "./support/agent-dir.mts";
-import btwExtension from "../extensions/btw.ts";
+import btwExtension, { listChildVisibleModels, type ChildProbeSdk } from "../extensions/btw.ts";
 
 /** Raw terminal sequences: matchesKey() compares input bytes, not key names. */
 const KEY = {
@@ -93,10 +94,12 @@ function makeHarness(options: { idle?: boolean; mode?: string } = {}) {
     modelRegistry: {
       find: () => undefined,
       getApiKeyAndHeaders: async () => ({ ok: false, error: "no auth in test" }),
-      // A real AuthStorage lets the extension build the registry a child would
-      // see. The fake provider below is never in it, so the pre-flight check
-      // takes the inline path instead of spawning a doomed Pi process.
-      authStorage: AuthStorage.create(),
+      // Pi before 0.80.8 builds the registry a child would see from a real
+      // AuthStorage; later Pi reads the agent directory through ModelRuntime
+      // and has neither. The fake provider below is in neither list, so the
+      // pre-flight check takes the inline path instead of spawning a doomed
+      // Pi process.
+      authStorage: (piSdk as any).AuthStorage?.create(),
     },
     model: undefined,
   };
@@ -524,4 +527,57 @@ test("tests run against a throwaway agent directory, not ~/.pi/agent", () => {
   // resolve this directory; test/support/agent-dir.mts points it at a temp dir.
   assert.equal(getAgentDir(), TEST_AGENT_DIR);
   assert.ok(TEST_AGENT_DIR.startsWith(tmpdir()), TEST_AGENT_DIR);
+});
+
+test("the pre-flight check answers inline for a provider only an extension registered", async () => {
+  const h = makeHarness();
+  await h.fire("session_start", { reason: "startup" });
+  const { pending } = await openAnswerView(h, { id: "test-model", provider: "test-provider" });
+  h.component()?.input(KEY.escape);
+  await pending;
+  // The probe must recognise the provider up front. When it cannot, /btw spawns
+  // a child that exits on "Model not found" and reports "BTW RPC unavailable".
+  const notices = JSON.stringify(h.notifications);
+  assert.match(notices, /"test-provider\\" is registered by an extension/, notices);
+  assert.doesNotMatch(notices, /BTW RPC unavailable/, notices);
+});
+
+test("the probe lists what the child sees with this Pi's own SDK", async () => {
+  const ctx = { modelRegistry: { authStorage: (piSdk as any).AuthStorage?.create() } } as any;
+  const providers = new Set((await listChildVisibleModels(ctx)).map((m) => m.provider));
+  assert.ok(providers.has("anthropic"), [...providers].join(","));
+  assert.ok(!providers.has("test-provider"));
+});
+
+test("the probe builds a ModelRuntime without refreshing catalogs on Pi 0.80.8+", async () => {
+  const calls: unknown[] = [];
+  const sdk: ChildProbeSdk = {
+    ModelRuntime: {
+      async create(options) {
+        calls.push(options);
+        return { getModels: () => [{ provider: "openai-codex" }, { provider: "anthropic" }] };
+      },
+    },
+    ModelRegistry: { create: () => { throw new Error("the legacy path must not run"); } },
+  };
+  const models = await listChildVisibleModels({ modelRegistry: {} } as any, sdk);
+  assert.deepEqual(models.map((m) => m.provider), ["openai-codex", "anthropic"]);
+  assert.deepEqual(calls, [{ refreshOnCreate: false }]);
+});
+
+test("the probe falls back to ModelRegistry.create on Pi before 0.80.8", async () => {
+  const authStorage = { file: "auth.json" };
+  let received: unknown;
+  const sdk: ChildProbeSdk = {
+    ModelRegistry: {
+      create(storage) {
+        received = storage;
+        return { getAll: () => [{ provider: "anthropic" }] };
+      },
+    },
+  };
+  const models = await listChildVisibleModels({ modelRegistry: { authStorage } } as any, sdk);
+  assert.deepEqual(models.map((m) => m.provider), ["anthropic"]);
+  assert.equal(received, authStorage);
+  await assert.rejects(listChildVisibleModels({ modelRegistry: {} } as any, {}), /neither ModelRuntime/);
 });

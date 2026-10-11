@@ -22,11 +22,11 @@ import { join } from "node:path";
 import { stream, type UserMessage, type AssistantMessageEventStream } from "@earendil-works/pi-ai/compat";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import * as piSdk from "@earendil-works/pi-coding-agent";
 import {
   convertToLlm,
   getAgentDir,
   getMarkdownTheme,
-  ModelRegistry,
   serializeConversation,
 } from "@earendil-works/pi-coding-agent";
 import type { Component, MarkdownTheme } from "@earendil-works/pi-tui";
@@ -169,11 +169,12 @@ let slotState: BtwSlotState = createInitialState();
 let currentAbortController: AbortController | null = null;
 
 /**
- * Providers the RPC child cannot see. The child runs with `--no-extensions`,
- * so providers registered through `pi.registerProvider()` do not exist there
- * and spawning against them always fails.
+ * Providers the RPC child can see, probed once per session. The child runs
+ * with `--no-extensions`, so providers registered through
+ * `pi.registerProvider()` do not exist there and spawning against them always
+ * fails. The in-flight probe is shared so slots asking at once probe once.
  */
-let childVisibleProviders: Set<string> | null = null;
+let childVisibleProviders: Promise<Set<string> | null> | null = null;
 
 // ────────────────────────────────────────────────────────────────
 // Settings persistence
@@ -1018,18 +1019,25 @@ async function showHistory(ctx: ExtensionContext): Promise<void> {
  *
  * The child runs with `--no-extensions`, so it sees built-in providers plus
  * anything in `models.json`, but not providers registered at runtime through
- * `pi.registerProvider()`. Building a registry the same way the child does is
- * the cheapest accurate way to know that up front, instead of spawning a
+ * `pi.registerProvider()`. Building a model list the same way the child does
+ * is the cheapest accurate way to know that up front, instead of spawning a
  * process that is guaranteed to exit with "Model not found".
  */
-function getChildVisibleProviders(ctx: ExtensionContext): Set<string> | null {
+function getChildVisibleProviders(ctx: ExtensionContext): Promise<Set<string> | null> {
   if (childVisibleProviders) return childVisibleProviders;
+  const probe = probeChildVisibleProviders(ctx);
+  childVisibleProviders = probe;
+  // A failed probe is not remembered, so the next question tries again.
+  void probe.then((providers) => {
+    if (!providers && childVisibleProviders === probe) childVisibleProviders = null;
+  });
+  return probe;
+}
+
+async function probeChildVisibleProviders(ctx: ExtensionContext): Promise<Set<string> | null> {
   try {
-    const registry = ModelRegistry.create(ctx.modelRegistry.authStorage);
-    const providers = new Set(registry.getAll().map((m) => m.provider));
-    if (providers.size === 0) return null;
-    childVisibleProviders = providers;
-    return childVisibleProviders;
+    const providers = new Set((await listChildVisibleModels(ctx)).map((m) => m.provider));
+    return providers.size > 0 ? providers : null;
   } catch (e) {
     // Probing is an optimisation. If it fails, fall back to spawning and
     // letting the normal error path handle it.
@@ -1038,9 +1046,49 @@ function getChildVisibleProviders(ctx: ExtensionContext): Set<string> | null {
   }
 }
 
-function childCanUseProvider(ctx: ExtensionContext, provider: string): boolean {
-  const providers = getChildVisibleProviders(ctx);
+async function childCanUseProvider(ctx: ExtensionContext, provider: string): Promise<boolean> {
+  const providers = await getChildVisibleProviders(ctx);
   return providers ? providers.has(provider) : true;
+}
+
+/** A model as the probe reads it: only its provider matters. */
+interface ProbedModel {
+  provider: string;
+}
+
+/**
+ * The SDK surface the probe uses. Pi 0.80.8 replaced the synchronous
+ * `ModelRegistry.create(authStorage)` with the async `ModelRuntime.create()`
+ * and dropped `ctx.modelRegistry.authStorage`, so both are read through the
+ * module namespace: a named import of either fails to link on the Pi versions
+ * that lack it.
+ */
+export interface ChildProbeSdk {
+  ModelRuntime?: {
+    create(options?: { refreshOnCreate?: boolean }): Promise<{ getModels(): readonly ProbedModel[] }>;
+  };
+  ModelRegistry?: { create?(authStorage: unknown): { getAll(): readonly ProbedModel[] } };
+}
+
+/**
+ * The models the RPC child will see. Both builders read the agent directory
+ * the child inherits (built-in providers, `models.json`, cached catalogs), and
+ * neither sees providers registered by extensions.
+ */
+export async function listChildVisibleModels(
+  ctx: Pick<ExtensionContext, "modelRegistry">,
+  sdk: ChildProbeSdk = piSdk as unknown as ChildProbeSdk,
+): Promise<readonly ProbedModel[]> {
+  if (typeof sdk.ModelRuntime?.create === "function") {
+    // No catalog or availability refresh: the child starts offline as well.
+    const runtime = await sdk.ModelRuntime.create({ refreshOnCreate: false });
+    return runtime.getModels();
+  }
+  const authStorage = (ctx.modelRegistry as { authStorage?: unknown }).authStorage;
+  if (typeof sdk.ModelRegistry?.create === "function" && authStorage) {
+    return sdk.ModelRegistry.create(authStorage).getAll();
+  }
+  throw new Error("This Pi version exposes neither ModelRuntime.create nor ModelRegistry.create");
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -1100,7 +1148,7 @@ async function doAskRpc(ctx: ExtensionContext, question: string, slot: BtwSlot):
 
   // A provider registered by an extension cannot exist inside the child, so
   // skip the doomed spawn and answer inline instead.
-  const rpcUsable = childCanUseProvider(ctx, model.provider);
+  const rpcUsable = await childCanUseProvider(ctx, model.provider);
   if (!rpcUsable) {
     logBtw(
       "warn",
