@@ -8,7 +8,7 @@
  *   https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/main/packages/pi-smart-btw
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -35,14 +35,33 @@ export interface BtwRpcInvocation {
  * `pi` npm shim. On Windows that shim is usually a .cmd file, which cannot be
  * launched by spawn() with shell:false. Bun binaries have no JS CLI file to
  * resolve, so they are launched directly.
+ *
+ * The package's own `bin` entry comes first: it is the file the `pi` command
+ * runs. Pi 1.x points it at a single-file bundle (dist/bundle/cli.js), which
+ * starts several times faster than the dist/cli.js module tree a child used
+ * to load; older Pi points it at dist/cli.js.
  */
 function resolvePiCliPath(): string | undefined {
   const packageDir = getPackageDir();
   const candidates = [
+    readPiBinEntry(packageDir),
     join(packageDir, "dist", "cli.js"),
     join(packageDir, "cli.js"),
   ];
-  return candidates.find((candidate) => existsSync(candidate));
+  return candidates.find((candidate): candidate is string => candidate !== undefined && existsSync(candidate));
+}
+
+/** The `pi` entry of the package's `bin` field, as an absolute path. */
+function readPiBinEntry(packageDir: string): string | undefined {
+  try {
+    const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as {
+      bin?: string | Record<string, string>;
+    };
+    const bin = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.pi;
+    return bin ? join(packageDir, bin) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function buildPiRpcInvocation(provider: string, modelId: string): BtwRpcInvocation {
