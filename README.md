@@ -134,6 +134,12 @@ Global settings at `~/.pi/agent/btw-settings.json`:
 | `"budget"` | Walk backwards up to token budget. | Configurable |
 | `"full"` | All context. | 100k+ |
 
+Context is resolved from Pi's active session branch before applying the selected
+strategy. Compaction boundaries and context edits are honored: summarized-away
+messages, omitted attempts, and replaced content are not copied into a side
+question. Full context can include branch summaries and custom messages, but
+excludes BTW's own entries and the main session's system prompt.
+
 Context is sent once per slot, on the first question. Follow-up questions in the
 same slot reuse the child's own conversation instead of resending it.
 

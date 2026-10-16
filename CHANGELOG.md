@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Side-question context now uses Pi's resolved session context before applying
+  the configured scope. Compacted history and omitted or replaced messages no
+  longer leak into a side question; branch summaries and custom context remain
+  available in full context, while BTW's own entries and main system prompts
+  stay excluded.
+- The `none` strategy stays context-free even when `maxContextTokens` is zero.
+
 ## [1.2.2] - 2026-10-11
 
 ### Fixed
