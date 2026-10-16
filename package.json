@@ -1,8 +1,8 @@
 {
   "name": "@nguyenquangthai/pi-btw",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "type": "module",
-  "description": "Fast, non-blocking, parallel side questions for Pi Coding Agent \u2014 RPC child process, 9 slots, streaming, answer injection.",
+  "description": "Fast, non-blocking, parallel side questions for Pi Coding Agent — RPC child process, 9 slots, streaming, answer injection.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -49,16 +49,16 @@
     "access": "public"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
+    "@earendil-works/pi-agent-core": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0"
   },

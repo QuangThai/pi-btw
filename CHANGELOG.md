@@ -15,6 +15,58 @@ This project follows [Semantic Versioning](https://semver.org/).
   stay excluded.
 - The `none` strategy stays context-free even when `maxContextTokens` is zero.
 
+## [1.2.2] - 2026-10-11
+
+### Fixed
+
+- **The inline answer failed for providers with their own API.** When /btw
+  answers inline (no tool-enabled child), it called pi-ai's global `stream()`,
+  which knows only built-in APIs, so a provider whose extension registered its
+  own API failed with `No API provider registered for api: …`. On Pi 0.86 and
+  later the inline answer now streams through `ctx.modelRegistry.stream()`,
+  which dispatches through the configured provider with the same request
+  options. Built-in providers, and providers that reuse a built-in API, send
+  the same request as before; older Pi keeps the global `stream()`.
+- A request that cannot start (unknown API, missing auth) now reports its own
+  cause instead of an empty answer replaced by the RPC child's error. A
+  failure after text arrived still keeps the partial answer, as before.
+
+### Tests
+
+- Development and CI run against Pi 1.1.0 (`@earendil-works/*` dev
+  dependencies pinned to 1.1.0; peer dependencies stay `*`, only their key
+  order changed). The legacy probe and global-stream paths stay covered with
+  injected fakes.
+- The inline answer is covered through the registry stream, its error event
+  before and after text, and without it.
+
+## [1.2.1] - 2026-10-11
+
+### Fixed
+
+- **A provider registered by an extension spawned a doomed child again.**
+  The pre-flight check that sends such providers straight to the inline
+  answer called `ModelRegistry.create(authStorage)`, which Pi 0.80.8 removed.
+  The check failed silently, every `/btw` spawned a child that exited on
+  `Model not found`, and the notice read `BTW RPC unavailable … exited with
+  code 1` instead of naming the provider. The check now reads the agent
+  directory through `ModelRuntime.create()` (older Pi keeps the previous
+  path), so the inline answer starts at once with the intended notice.
+  Built-in and `models.json` providers keep the tool-enabled child.
+
+### Changed
+
+- The child starts from the file the `pi` command runs. On Pi 1.x that is
+  the single-file bundle, which is ready in about 0.2–0.45 s instead of
+  0.9–1.2 s on Windows; older Pi still starts from `dist/cli.js`.
+
+### Tests
+
+- The suite runs against a throwaway agent directory. It used to write
+  `btw.log`, `auth.json`, and `settings.json` into the real `~/.pi/agent`.
+- Both probe paths are covered with an injected SDK, and the pre-flight
+  notice is asserted end to end.
+
 ## [1.2.0] - 2026-09-12
 
 Slot plumbing that was written but never connected is now wired into the

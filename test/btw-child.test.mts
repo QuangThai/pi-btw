@@ -1,7 +1,10 @@
+import "./support/agent-dir.mts";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { BtwChild, buildPiRpcInvocation, summarizeProviderError } from "../src/btw-child.ts";
 
 test("summarizeProviderError strips HTML error pages down to readable text", () => {
@@ -37,7 +40,11 @@ test("builds a runtime-safe Pi RPC invocation", () => {
   assert.ok(invocation.args.includes("--offline"));
 
   if (!process.versions.bun) {
-    assert.match(invocation.args[0] ?? "", /[\\/]dist[\\/]cli\.js$/);
+    // The file the `pi` command runs: dist/bundle/cli.js on Pi 1.x, dist/cli.js before.
+    const manifest = JSON.parse(readFileSync(join(getPackageDir(), "package.json"), "utf8"));
+    const bin = typeof manifest.bin === "string" ? manifest.bin : manifest.bin.pi;
+    assert.equal(invocation.args[0], join(getPackageDir(), bin));
+    assert.match(invocation.args[0] ?? "", /[\\/]dist[\\/](bundle[\\/])?cli\.js$/);
   }
 });
 

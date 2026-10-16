@@ -5,10 +5,14 @@
  * keyboard shortcuts, the TUI components, and the context filter. The views
  * are rendered for real, so a crash or a bad slice shows up here.
  */
+import "./support/agent-dir.mts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AuthStorage, initTheme, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
-import btwExtension from "../extensions/btw.ts";
+import { tmpdir } from "node:os";
+import * as piSdk from "@earendil-works/pi-coding-agent";
+import { getAgentDir, initTheme, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { TEST_AGENT_DIR } from "./support/agent-dir.mts";
+import btwExtension, { listChildVisibleModels, type ChildProbeSdk } from "../extensions/btw.ts";
 
 /** Raw terminal sequences: matchesKey() compares input bytes, not key names. */
 const KEY = {
@@ -90,10 +94,12 @@ function makeHarness(options: { idle?: boolean; mode?: string } = {}) {
     modelRegistry: {
       find: () => undefined,
       getApiKeyAndHeaders: async () => ({ ok: false, error: "no auth in test" }),
-      // A real AuthStorage lets the extension build the registry a child would
-      // see. The fake provider below is never in it, so the pre-flight check
-      // takes the inline path instead of spawning a doomed Pi process.
-      authStorage: AuthStorage.create(),
+      // Pi before 0.80.8 builds the registry a child would see from a real
+      // AuthStorage; later Pi reads the agent directory through ModelRuntime
+      // and has neither. The fake provider below is in neither list, so the
+      // pre-flight check takes the inline path instead of spawning a doomed
+      // Pi process.
+      authStorage: (piSdk as any).AuthStorage?.create(),
     },
     model: undefined,
   };
@@ -514,4 +520,125 @@ test("a settled turn is persisted even when every path failed", async () => {
   assert.equal(entries[0]!.data.slot, 0, "persisted turns must carry their slot");
   assert.equal(entries[0]!.data.turn, 1);
   assert.ok(entries[0]!.data.error, "a failure must be recorded as an error, not an empty answer");
+});
+
+test("tests run against a throwaway agent directory, not ~/.pi/agent", () => {
+  // The extension's log and settings, the registry probe, and RPC children all
+  // resolve this directory; test/support/agent-dir.mts points it at a temp dir.
+  assert.equal(getAgentDir(), TEST_AGENT_DIR);
+  assert.ok(TEST_AGENT_DIR.startsWith(tmpdir()), TEST_AGENT_DIR);
+});
+
+test("the pre-flight check answers inline for a provider only an extension registered", async () => {
+  const h = makeHarness();
+  await h.fire("session_start", { reason: "startup" });
+  const { pending } = await openAnswerView(h, { id: "test-model", provider: "test-provider" });
+  h.component()?.input(KEY.escape);
+  await pending;
+  // The probe must recognise the provider up front. When it cannot, /btw spawns
+  // a child that exits on "Model not found" and reports "BTW RPC unavailable".
+  const notices = JSON.stringify(h.notifications);
+  assert.match(notices, /"test-provider\\" is registered by an extension/, notices);
+  assert.doesNotMatch(notices, /BTW RPC unavailable/, notices);
+});
+
+test("the probe lists what the child sees with this Pi's own SDK", async () => {
+  const ctx = { modelRegistry: { authStorage: (piSdk as any).AuthStorage?.create() } } as any;
+  const providers = new Set((await listChildVisibleModels(ctx)).map((m) => m.provider));
+  assert.ok(providers.has("anthropic"), [...providers].join(","));
+  assert.ok(!providers.has("test-provider"));
+});
+
+test("the probe builds a ModelRuntime without refreshing catalogs on Pi 0.80.8+", async () => {
+  const calls: unknown[] = [];
+  const sdk: ChildProbeSdk = {
+    ModelRuntime: {
+      async create(options) {
+        calls.push(options);
+        return { getModels: () => [{ provider: "openai-codex" }, { provider: "anthropic" }] };
+      },
+    },
+    ModelRegistry: { create: () => { throw new Error("the legacy path must not run"); } },
+  };
+  const models = await listChildVisibleModels({ modelRegistry: {} } as any, sdk);
+  assert.deepEqual(models.map((m) => m.provider), ["openai-codex", "anthropic"]);
+  assert.deepEqual(calls, [{ refreshOnCreate: false }]);
+});
+
+test("the probe falls back to ModelRegistry.create on Pi before 0.80.8", async () => {
+  const authStorage = { file: "auth.json" };
+  let received: unknown;
+  const sdk: ChildProbeSdk = {
+    ModelRegistry: {
+      create(storage) {
+        received = storage;
+        return { getAll: () => [{ provider: "anthropic" }] };
+      },
+    },
+  };
+  const models = await listChildVisibleModels({ modelRegistry: { authStorage } } as any, sdk);
+  assert.deepEqual(models.map((m) => m.provider), ["anthropic"]);
+  assert.equal(received, authStorage);
+  await assert.rejects(listChildVisibleModels({ modelRegistry: {} } as any, {}), /neither ModelRuntime/);
+});
+
+/** Ask one question on the inline path and return the persisted turn. */
+async function askInline(h: ReturnType<typeof makeHarness>): Promise<any> {
+  await h.fire("session_start", { reason: "startup" });
+  const { pending } = await openAnswerView(h, { id: "test-model", provider: "test-provider" });
+  h.component()?.input(KEY.escape);
+  await pending;
+  return h.appended.find((e) => e.customType === "btw-entry")?.data;
+}
+
+test("the inline answer streams through ctx.modelRegistry.stream when Pi provides it", async () => {
+  const h = makeHarness();
+  const calls: any[] = [];
+  (h.ctx.modelRegistry as any).stream = (model: any, context: any, options: any) => {
+    calls.push({ model, context, options });
+    return (async function* () {
+      yield { type: "text_delta", delta: "REGISTRY-ANSWER" };
+      yield { type: "done", message: { usage: { input: 3, output: 5, cost: { total: 0 } } } };
+    })();
+  };
+  const turn = await askInline(h);
+  assert.equal(turn?.answer, "REGISTRY-ANSWER", JSON.stringify(turn));
+  assert.equal(turn?.error, undefined);
+  // The same request the global stream() received: model, prompt, and options.
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].model.provider, "test-provider");
+  assert.match(calls[0].context.messages[0].content[0].text, /why is the sky blue/);
+  assert.ok(calls[0].context.systemPrompt);
+  assert.equal(calls[0].options.apiKey, "test-key");
+  assert.ok(calls[0].options.signal instanceof AbortSignal);
+  assert.equal(typeof calls[0].options.maxTokens, "number");
+});
+
+test("a registry stream that fails to start reports its cause", async () => {
+  const h = makeHarness();
+  (h.ctx.modelRegistry as any).stream = () => (async function* () {
+    yield { type: "error", reason: "error", error: { errorMessage: "No API provider registered for api: custom-api" } };
+  })();
+  const turn = await askInline(h);
+  assert.match(turn?.error ?? "", /No API provider registered for api: custom-api/, JSON.stringify(turn));
+});
+
+test("without ctx.modelRegistry.stream the inline answer keeps pi-ai's stream()", async () => {
+  const h = makeHarness();
+  assert.equal((h.ctx.modelRegistry as any).stream, undefined);
+  const turn = await askInline(h);
+  // The fake model has no provider or API pi-ai knows, so the global stream()
+  // rejects it (worded "Unknown provider" or "No API provider" by version).
+  assert.match(turn?.error ?? "", /Unknown provider|No API provider registered/, JSON.stringify(turn));
+});
+
+test("a stream that fails after text arrived keeps the partial answer, as before", async () => {
+  const h = makeHarness();
+  (h.ctx.modelRegistry as any).stream = () => (async function* () {
+    yield { type: "text_delta", delta: "PARTIAL-ANSWER" };
+    yield { type: "error", reason: "error", error: { errorMessage: "connection reset" } };
+  })();
+  const turn = await askInline(h);
+  assert.equal(turn?.answer, "PARTIAL-ANSWER", JSON.stringify(turn));
+  assert.equal(turn?.error, undefined);
 });
