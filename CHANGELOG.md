@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.3] - 2026-10-16
 
 ### Fixed
 
@@ -14,6 +14,13 @@ This project follows [Semantic Versioning](https://semver.org/).
   available in full context, while BTW's own entries and main system prompts
   stay excluded.
 - The `none` strategy stays context-free even when `maxContextTokens` is zero.
+
+### Tests
+
+- Eight context regression tests cover repeated compaction, omissions and
+  replacements, branch-local edits, branch summaries and custom context,
+  system-prompt isolation, and the existing scope limits. The full suite now
+  has 66 tests, all running against Pi 1.1.0 in isolated agent directories.
 
 ## [1.2.2] - 2026-10-11
 
